@@ -1,0 +1,12 @@
+node_modules/
+dist-electron/
+dist-renderer/
+dist/*
+!dist/Cate-Setup-*.exe
+scripts/cat-preview.*
+*.log
+
+.cursor/
+.impeccable/
+.claude/
+CLAUDE.md

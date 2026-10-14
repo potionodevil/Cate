@@ -1,0 +1,24 @@
+<!doctype html>
+<!--
+Cate — © 2026 R.S. Alle Rechte vorbehalten.
+Dieser Code ist geistiges Eigentum von R.S. Vervielfältigung, Weitergabe oder
+Nutzung ohne ausdrückliche schriftliche Erlaubnis von R.S. ist untersagt.
+-->
+<html lang="de">
+  <head>
+    <meta charset="UTF-8" />
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline' 'unsafe-eval'; connect-src 'self' ws://localhost:5173"
+    />
+    <title>Cate</title>
+    <style>
+      /* Minimal pre-theme.css fallback to avoid a white flash before React mounts. */
+      html, body, #root { margin: 0; height: 100%; background: #0d1117; color: #e6edf3; font-family: "Segoe UI", sans-serif; }
+    </style>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="./main.tsx"></script>
+  </body>
+</html>
