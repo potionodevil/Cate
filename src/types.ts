@@ -67,6 +67,8 @@ export interface SessionRecord {
   expiresAt?: number | null;
   startedAt?: number;
   archivedAt?: number | null;
+  /** Wurde nicht vom Nutzer beendet: kommt nach einem Neustart von selbst zurück und zählt weiter als „Aktuell“. */
+  resume?: boolean;
 }
 
 export interface CreateProjectOptions {
@@ -224,6 +226,8 @@ export interface HarnessApi {
   setDefaultModel(model: string | null): Promise<{ ok: boolean }>;
   getRetentionDays(): Promise<number>;
   setRetentionDays(days: number): Promise<{ ok: boolean }>;
+  getAutostart(): Promise<boolean>;
+  setAutostart(on: boolean): Promise<boolean>;
   getPetSettings(): Promise<PetSettings>;
   setPetSettings(patch: Partial<PetSettings>): Promise<PetSettings>;
   resetPetSettings(): Promise<PetSettings>;

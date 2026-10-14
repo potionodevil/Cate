@@ -585,11 +585,16 @@ app.whenReady().then(async () => {
   // Persistence across app restarts / PC reboot: every session that was
   // running when the app (or the PC) went down and was not stopped by the
   // user is respawned automatically, resuming its agent conversation.
-  for (const p of loadState().projects) {
-    for (const s of sessionManager.listSessions(p.id)) {
-      if (s.resume && s.status !== "running") reattachById(s.id, p.id);
+  const respawnAll = () => {
+    for (const p of loadState().projects) {
+      for (const s of sessionManager.listSessions(p.id)) {
+        if (s.resume && s.status !== "running") reattachById(s.id, p.id);
+      }
     }
-  }
+  };
+  // erst wenn die Oberfläche geladen ist, sonst verpasst sie die "sessions:spawned"-Meldungen
+  if (win.webContents.isLoading()) win.webContents.once("did-finish-load", () => setTimeout(respawnAll, 500));
+  else respawnAll();
 
   ipcMain.on("session:paneInput", (e, { paneId, data }: { paneId: string; data: string }) => {
     sessionManager.writePane(paneId, data, { sender: e.sender });
@@ -731,6 +736,16 @@ app.whenReady().then(async () => {
     state.projects = state.projects.filter((p) => p.id !== id);
     saveState(state);
     return { ok: true, hermesProfileResult: result };
+  });
+
+  // „Mit Windows starten“: Schalter aus den Einstellungen; der Start läuft versteckt im Tray, damit Sessions nach einem Neustart von selbst zurückkommen.
+  ipcMain.handle("app:getAutostart", () => loadState().autoStart !== false);
+  ipcMain.handle("app:setAutostart", (_e, on: boolean) => {
+    const state = loadState();
+    state.autoStart = !!on;
+    saveState(state);
+    if (!isDev) app.setLoginItemSettings({ openAtLogin: !!on, args: ["--hidden"] });
+    return !!on;
   });
 
   ipcMain.handle("usage:recent", (_e, { profile, limit }: { profile?: string; limit?: number }) =>

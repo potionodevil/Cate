@@ -68,6 +68,7 @@ export function Settings({
   onMotionChange: (enabled: boolean) => void;
 }) {
   const [saving, setSaving] = useState(false);
+  const [autostart, setAutostartState] = useState<boolean | null>(null);
   const [retentionDays, setRetentionDaysState] = useState<number | null>(null);
   const [retentionSaving, setRetentionSaving] = useState(false);
   const [agentDefaults, setAgentDefaults] = useState<{ defaultPresetId: string; defaultModel: string | null } | null>(null);
@@ -83,6 +84,10 @@ export function Settings({
   const [authLoading, setAuthLoading] = useState(false);
   const [authError, setAuthError] = useState<string | null>(null);
   const [authBusy, setAuthBusy] = useState(false);
+
+  useEffect(() => {
+    void window.harness.getAutostart().then(setAutostartState);
+  }, []);
 
   useEffect(() => {
     function onKeyDown(e: KeyboardEvent) {
@@ -240,6 +245,18 @@ export function Settings({
           </TabsList>
 
           <TabsContent value="general" className="hh-settings-scroll flex flex-col gap-2">
+            <div className="flex items-center justify-between gap-3">
+              <div className="flex flex-col">
+                <Label htmlFor="autostart">Mit Windows starten</Label>
+                <span className="hh-faint text-xs">Startet Cate versteckt im Tray; Sessions kommen nach einem Neustart von selbst zurück.</span>
+              </div>
+              <Switch
+                id="autostart"
+                checked={autostart ?? true}
+                disabled={autostart === null}
+                onCheckedChange={(on) => void window.harness.setAutostart(on).then(setAutostartState)}
+              />
+            </div>
             <div className="hh-section-header">Agent-Standards</div>
             <p className="hh-muted m-0 text-sm">
               Standard-CLI und Standardmodell für neue Sessions. Ein Projekt kann beides in seinen Projekteinstellungen

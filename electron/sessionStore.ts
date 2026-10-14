@@ -320,8 +320,8 @@ export function markOrphanedRunningSessions(now = Date.now(), keep: ReadonlySet<
     .all() as { id: string }[]).filter((o) => !keep.has(o.id));
   for (const { id } of orphans) {
     db.prepare(
-      `UPDATE sessions SET status = 'stopped', ended_at = ?, last_active_at = ? WHERE id = ?`
-    ).run(now, now, id);
+      `UPDATE sessions SET status = 'stopped', ended_at = ? WHERE id = ?`
+    ).run(now, id);
     if (orphans.length > 0) console.log(`[harness] orphaned session ${id} re-stamped to "stopped"`);
   }
 }

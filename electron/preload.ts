@@ -184,6 +184,8 @@ export interface HarnessApi {
   setDefaultModel(model: string | null): Promise<{ ok: boolean }>;
   getRetentionDays(): Promise<number>;
   setRetentionDays(days: number): Promise<{ ok: boolean }>;
+  getAutostart(): Promise<boolean>;
+  setAutostart(on: boolean): Promise<boolean>;
   getPetSettings(): Promise<PetSettings>;
   setPetSettings(patch: Partial<PetSettings>): Promise<PetSettings>;
   resetPetSettings(): Promise<PetSettings>;
@@ -311,6 +313,8 @@ const api: HarnessApi = {
   setDefaultModel: (model) => ipcRenderer.invoke("settings:setDefaultModel", { model }),
   getRetentionDays: () => ipcRenderer.invoke("settings:getRetentionDays"),
   setRetentionDays: (days) => ipcRenderer.invoke("settings:setRetentionDays", { days }),
+  getAutostart: () => ipcRenderer.invoke("app:getAutostart"),
+  setAutostart: (on) => ipcRenderer.invoke("app:setAutostart", on),
   getPetSettings: () => ipcRenderer.invoke("pet:getSettings"),
   setPetSettings: (patch) => ipcRenderer.invoke("pet:setSettings", patch),
   resetPetSettings: () => ipcRenderer.invoke("pet:reset"),

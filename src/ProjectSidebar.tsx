@@ -28,18 +28,21 @@ const FILTERS: { id: SessionFilter; label: string }[] = [
 ];
 const RECENT_MS = 3 * 24 * 60 * 60 * 1000;
 
+/** Eine Session gilt als „aktuell“, solange sie läuft oder nach einem Neustart wieder aufgenommen werden soll — erst ein bewusstes Beenden nimmt sie aus der Liste. */
+const isCurrent = (s: SessionRecord) => s.status === "running" || !!s.resume;
+
 function applyFilter(sessions: SessionRecord[], filter: SessionFilter): SessionRecord[] {
   const active = sessions.filter((s) => !s.archivedAt);
   const byRecent = (a: SessionRecord, b: SessionRecord) => b.lastActiveAt - a.lastActiveAt;
   switch (filter) {
     case "aktuell":
-      return active.filter((s) => s.status === "running").sort(byRecent);
+      return active.filter(isCurrent).sort(byRecent);
     case "zuletzt":
       return active.filter((s) => Date.now() - s.lastActiveAt < RECENT_MS).sort(byRecent);
     case "gestoppt":
-      return active.filter((s) => s.status !== "running").sort(byRecent);
+      return active.filter((s) => !isCurrent(s)).sort(byRecent);
     default:
-      return active.sort((a, b) => Number(b.status === "running") - Number(a.status === "running") || byRecent(a, b));
+      return active.sort((a, b) => Number(isCurrent(b)) - Number(isCurrent(a)) || byRecent(a, b));
   }
 }
 

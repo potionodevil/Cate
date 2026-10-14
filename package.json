@@ -1,6 +1,6 @@
 {
   "name": "hermes-harness",
-  "version": "0.3.8",
+  "version": "0.3.9",
   "description": "Multi-Terminal Harness mit Hermes-Integration, Projekt-Verwaltung und AI Agent Hub",
   "main": "dist-electron/main.js",
   "private": true,
