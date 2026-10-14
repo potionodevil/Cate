@@ -3,21 +3,24 @@
  * Dieser Code ist geistiges Eigentum von R.S. Vervielfältigung, Weitergabe oder
  * Nutzung ohne ausdrückliche schriftliche Erlaubnis von R.S. ist untersagt.
  */
-import { app, BrowserWindow, ipcMain, dialog, Menu, globalShortcut, Tray, nativeImage, powerMonitor } from "electron";
+import { app, BrowserWindow, ipcMain, dialog, Menu, globalShortcut, Tray, nativeImage, powerMonitor, session as electronSession } from "electron";
 import { join, dirname } from "path";
 import { existsSync, mkdirSync, readFileSync, writeFileSync, appendFileSync, unlinkSync, readdirSync } from "fs";
 import { homedir } from "os";
 import { loadState, saveState, slugifyProfileName, projectExportData, parseProjectExport, type Project } from "./projectStore";
-import { hermesProfileCreate, hermesProfileDelete, hermesAuthAdd, hermesAuthList, hermesAuthRemove, hermesDisableTelemetryPrompt } from "./hermesCli";
+import { listSubagents, readSubagent, type SubagentInfo } from "./subagents";
+import { attachFromClipboard, attachPickFiles, attachSaveBytes } from "./attachments";
+import { hermesProfileCreate, hermesProfileDelete, hermesAuthAdd, hermesAuthList, hermesAuthRemove, hermesDisableTelemetryPrompt, hermesEnsureProfile } from "./hermesCli";
 import { readRecentUsage, sumUsageSince } from "./usageReader";
 import { getUsageInsights, getAccountLimits } from "./hermesUsage";
 import { getCodexUsage } from "./codexUsage";
 import { BUILTIN_AGENT_PRESETS, buildSpawnArgs, DEFAULT_PRESET_ID } from "./agentPresets";
 import { cloneRepository, isGitAvailable } from "./gitRepo";
-import { stripAnsi, readAirFile } from "./airFormat";
+import { stripAnsi, readAirFile, buildRestoreContext } from "./airFormat";
 import { SessionManager, contextTextPath, type CreateSessionOptions } from "./sessionManager";
 import { listCachedModels } from "./modelCatalog";
 import { detectInstalledAgents } from "./agentDetection";
+import { collectProviderSkills } from "./providerSkills";
 import {
   setProjectContextText,
   setProjectContextFile,
@@ -27,6 +30,7 @@ import {
 } from "./projectContext";
 import { randomUUID } from "crypto";
 import { listPluginManifests, registerPluginManifest } from "./pluginRegistry";
+import { getDefaultPluginHost } from "./pluginHost";
 import { injectContext, type ContextPayload } from "./contextCore";
 import { pickContextFiles, readClipboardContext } from "./contextPicker";
 import { markOrphanedRunningSessions } from "./sessionStore";
@@ -96,7 +100,7 @@ function createWindow(): BrowserWindow {
     frame: false,
     // Match :root --bg-primary of the default theme so the frame the OS
     // composes before the first renderer paint is never white.
-    backgroundColor: "#0d1117",
+    backgroundColor: "#0a0a0c",
     // Never-Sleep-Terminals: closing the window must not destroy the
     // BrowserWindow (and with it the page, its xterm state and the IPC
     // channels to live agent panes) — close is intercepted below to hide().
@@ -418,11 +422,7 @@ app.whenReady().then(async () => {
       }
     }
   ]));
-  tray.on("click", () => {
-    if (win.isDestroyed()) return;
-    win.show();
-    win.focus();
-  });
+  // Linksklick auf das Tray-Symbol tut bewusst nichts; Rechtsklick öffnet das Menü mit „Cate anzeigen“.
 
   // Daemon gone (killed, crashed): keep every session's context and resume flag
   // untouched and restart the app, which starts a fresh daemon and respawns the
@@ -435,6 +435,27 @@ app.whenReady().then(async () => {
 
   const petCtl = setupPet(win, sessionManager);
 
+  // Projekte, deren Hermes-Profil fehlt (z. B. weil das Anlegen abgebrochen ist), im Hintergrund reparieren.
+  for (const project of loadState().projects) void hermesEnsureProfile(project.hermesProfile);
+
+  // Zwischenablage fuer die eigene Oberflaeche (file:// und Vite-Dev) erlauben,
+  // damit navigator.clipboard.readText im TerminalPane funktioniert.
+  {
+    const own = (url: string) => url.startsWith("file://") || url.startsWith("http://localhost:5173");
+    const allowed = new Set(["clipboard-read", "clipboard-sanitized-write"]);
+    const ses = electronSession.defaultSession;
+    ses.setPermissionRequestHandler((wc, permission, callback) => {
+      let url = "";
+      try { url = wc.getURL(); } catch { /* destroyed */ }
+      callback(allowed.has(permission) && own(url));
+    });
+    ses.setPermissionCheckHandler((wc, permission, requestingOrigin) => {
+      let url = requestingOrigin || "";
+      if (!url && wc) { try { url = wc.getURL(); } catch { /* destroyed */ } }
+      return allowed.has(permission) && own(url);
+    });
+  }
+
   const registered = globalShortcut.register("Alt+Space", () => {
     if (!win.isDestroyed()) win.webContents.send("plugins:shortcut");
   });
@@ -443,6 +464,19 @@ app.whenReady().then(async () => {
   ipcMain.handle("window:minimize", (event) => {
     BrowserWindow.fromWebContents(event.sender)?.minimize();
   });
+  // Maximieren/Wiederherstellen für das rahmenlose Fenster; die Oberfläche bekommt jeden Wechsel gemeldet, damit das Symbol stimmt.
+  ipcMain.handle("window:toggleMaximize", (event) => {
+    const w = BrowserWindow.fromWebContents(event.sender);
+    if (!w) return false;
+    if (w.isMaximized()) w.unmaximize();
+    else w.maximize();
+    return w.isMaximized();
+  });
+  for (const ev of ["maximize", "unmaximize"] as const) {
+    win.on(ev as "maximize", () => {
+      if (!win.webContents.isDestroyed()) win.webContents.send("window:maximized", win.isMaximized());
+    });
+  }
   ipcMain.handle("window:close", (event) => {
     // "Never Sleep Terminals": the X button hides the window instead of
     // quitting the app, so every agent pty keeps running and the session
@@ -454,22 +488,81 @@ app.whenReady().then(async () => {
       win.hide();
     }
   });
-  ipcMain.handle("plugins:list", () => listPluginManifests());
+  ipcMain.handle("plugins:manifests", () => listPluginManifests());
+  // Plugin-Host (19 Backend-Plugins): Aktivierung, Konfiguration, Dispatcher.
+  const pluginHost = getDefaultPluginHost();
+  ipcMain.handle("plugins:list", () => pluginHost.listPlugins());
+  ipcMain.handle("plugins:setEnabled", (_e, { id, enabled }: { id: string; enabled: boolean }) => pluginHost.setEnabled(id, !!enabled));
+  ipcMain.handle("plugins:setConfig", (_e, { id, key, value }: { id: string; key: string; value: unknown }) => pluginHost.setConfig(id, key, value));
+  ipcMain.handle("plugins:getConfig", () => pluginHost.getConfig());
+  ipcMain.handle("plugins:getAppDataDir", () => pluginHost.appDataDir);
+  ipcMain.handle(
+    "plugins:invoke",
+    (_e, { id, op, args, projectRoot }: { id: string; op: string; args?: unknown; projectRoot?: string }) =>
+      pluginHost.invoke(id, op, args, { projectRoot })
+  );
+  // Ereignis "sessionEnded": SessionManager hat keinen Emitter (Datei gehoert dem
+  // Session-Restore-Strang), daher wird finalizeSession hier minimal umhuellt.
+  try {
+    const sm = sessionManager as unknown as {
+      finalizeSession?: (...a: unknown[]) => unknown;
+      sessions?: Map<string, { name?: string; status?: string }>;
+    };
+    const original = sm.finalizeSession;
+    if (typeof original === "function") {
+      sm.finalizeSession = function (this: unknown, ...a: unknown[]) {
+        const out = original.apply(this, a);
+        try {
+          const id = String(a[0]);
+          const s = sm.sessions?.get(id);
+          void pluginHost.emit("sessionEnded", { sessionId: id, name: s?.name, status: s?.status ?? String(a[1]) });
+          // Warte-Erkennung: endet eine Session endgueltig, traegt main ihren
+          // Eintrag aus — auch wenn kein Pane mehr gemountet war, das "false"
+          // melden koennte (Hintergrund-Sessions ohne UI).
+          waitStates.delete(id);
+          petCtl?.setWaitingCount?.([...waitStates.values()].filter(Boolean).length);
+        } catch {
+          /* nie den Sitzungsabschluss stoeren */
+        }
+        return out;
+      };
+    }
+  } catch {
+    /* Hook optional */
+  }
   ipcMain.handle("context:inject", (_e, { sessionId, payload }: { sessionId: string; payload: ContextPayload }) =>
     injectContext(sessionId, payload)
   );
   ipcMain.handle("context:pickFiles", () => pickContextFiles(win));
+  // Anhänge für Agenten: Bild/Datei aus Zwischenablage, Dateiauswahl, abgelegte Bytes — zurück kommen Pfade, die die Oberfläche in den Prompt einfügt.
+  ipcMain.handle("attach:clipboard", () => attachFromClipboard());
+  // Subagenten (Claude Code / Hermes) der Projekte, seit kurz vor dem App-Start; die Liste merkt sich die Fundstellen fürs Lesen.
+  const subagentSince = Date.now() - 10 * 60_000;
+  const subagentIndex = new Map<string, SubagentInfo>();
+  ipcMain.handle("subagents:list", () => {
+    const list = listSubagents(loadState().projects, subagentSince);
+    for (const s of list) subagentIndex.set(s.id, s);
+    return list;
+  });
+  ipcMain.handle("subagents:read", (_e, { id }: { id: string }) => {
+    const info = subagentIndex.get(id);
+    return info ? readSubagent(info) : [];
+  });
+  ipcMain.handle("attach:pick", () => attachPickFiles(win));
+  ipcMain.handle("attach:saveBytes", (_e, { name, data }: { name: string; data: Uint8Array }) => attachSaveBytes(name, data));
   ipcMain.handle("context:readClipboard", () => readClipboardContext());
 
   // Session-centric IPC routes
   ipcMain.handle(
     "session:create",
-    (
+    async (
       _e,
       opts: { projectId: string; cwd: string; name: string; presetId?: string; profile?: string; model?: string }
     ) => {
         const project = loadState().projects.find((p) => p.id === opts.projectId);
         if (!project) throw new Error("Project not found");
+        // Fehlt das Hermes-Profil (Anlegen war gescheitert), wird es jetzt nachgeholt statt dass die Session sofort abbricht.
+        await hermesEnsureProfile(opts.profile || project.hermesProfile);
         const state = loadState();
         const presetId = opts.presetId || project.defaultPresetId || state.defaultPresetId || DEFAULT_PRESET_ID;
         const model = opts.model || project.defaultModel || state.defaultModel || undefined;
@@ -549,7 +642,7 @@ app.whenReady().then(async () => {
     const isHermes = opts.presetId === "hermes" && !!opts.shellOverride;
     if (record.contextPath && existsSync(record.contextPath) && isHermes) {
       try {
-        const restoredContext = readAirFile(record.contextPath);
+        const restoredContext = buildRestoreContext(readAirFile(record.contextPath), 8000);
         // Wiederhergestellter Kontext wird dem normalen Start-Seed
         // VORANGESTELLT statt ihn zu ersetzen, damit der Agent sowohl die
         // alte Session-Historie als auch die uebliche Erst-Nachricht
@@ -557,7 +650,16 @@ app.whenReady().then(async () => {
         const seed = buildHermesSeedQuery(project.id, "", scriptsDir());
         const pending = inbox.length ? `Neue Nachrichten anderer Sessions:\n${inbox.join("\n")}\n\n` : "";
         const combined = `Wiederhergestellter Session-Kontext:\n${restoredContext}\n\n${pending}${seed}`;
-        opts.args = [...(opts.args ?? []), "chat", "-q", combined];
+        // Seed per Datei statt als Kommandozeilenargument (Laengenlimit/Quoting).
+        try {
+          const seedDir = join(app.getPath("userData"), "session-context");
+          mkdirSync(seedDir, { recursive: true });
+          const seedFile = join(seedDir, `${record.id}.seed.txt`);
+          writeFileSync(seedFile, combined, "utf8");
+          opts.args = [...(opts.args ?? []), "chat", "--query-file", seedFile];
+        } catch {
+          opts.args = [...(opts.args ?? []), "chat", "-q", combined];
+        }
       } catch {
         // Spawn without context if the saved file cannot be read.
       }
@@ -586,18 +688,30 @@ app.whenReady().then(async () => {
   // running when the app (or the PC) went down and was not stopped by the
   // user is respawned automatically, resuming its agent conversation.
   const respawnAll = () => {
-    for (const p of loadState().projects) {
-      for (const s of sessionManager.listSessions(p.id)) {
-        if (s.resume && s.status !== "running") reattachById(s.id, p.id);
-      }
-    }
+    const todo = sessionManager.listRestorable(loadState().projects.map((p) => p.id));
+    todo.forEach((s, i) => setTimeout(() => reattachById(s.id, s.projectId), i * 600));
   };
   // erst wenn die Oberfläche geladen ist, sonst verpasst sie die "sessions:spawned"-Meldungen
   if (win.webContents.isLoading()) win.webContents.once("did-finish-load", () => setTimeout(respawnAll, 500));
   else respawnAll();
 
+  // Warte-Erkennung: wie viele Sessions warten gerade auf eine Eingabe?
+  // Zähler geht an die Desktop-Katze. `waitStates` wird im finalizeSession-
+  // Wrapper (weiter oben im Quelltext) gelesen — sicher, weil dieser erst
+  // bei echtem Session-Ende läuft, also nach abgeschlossenem Setup.
+  const waitStates = new Map<string, boolean>();
+
   ipcMain.on("session:paneInput", (e, { paneId, data }: { paneId: string; data: string }) => {
     sessionManager.writePane(paneId, data, { sender: e.sender });
+  });
+
+  // Pane-Meldungen (renderer-seitig): true setzt den Warte-Eintrag, false
+  // entfernt ihn; der Zähler geht an die Katze (nur bei Änderung gesendet).
+  ipcMain.on("session:waitState", (_e, { sessionId, waiting }: { sessionId: string; waiting: boolean }) => {
+    if (waiting) waitStates.set(sessionId, true);
+    else waitStates.delete(sessionId);
+    const count = [...waitStates.values()].filter(Boolean).length;
+    petCtl?.setWaitingCount?.(count);
   });
 
   ipcMain.on("session:paneResize", (_e, { paneId, cols, rows }: { paneId: string; cols: number; rows: number }) => {
@@ -766,6 +880,16 @@ app.whenReady().then(async () => {
 
   ipcMain.handle("agents:localModels", (_e, { endpoint }: { endpoint?: string }) => listLocalModels(endpoint));
 
+  // „Skills & Plugins je Provider“: read-only Sammlung der Skills/Plugins/
+  // Konfigurationen des jeweiligen Agent-CLIs (Hermes-Profil, Claude Code,
+  // Codex CLI, OpenCode). Reagiert auf den Agenten-Preset (presetId) und
+  // schreibt NIEMALS — Collector ist rein lesend (providerSkills.ts).
+  ipcMain.handle(
+    "providers:skills",
+    (_e, { presetId, profile, projectFolder }: { presetId: string; profile?: string; projectFolder?: string }) =>
+      collectProviderSkills(presetId, { profile, projectFolder })
+  );
+
   ipcMain.handle("settings:getAgentConfig", () => {
     const state = loadState();
     return { localModel: state.localModel ?? null, mcpServers: state.mcpServers ?? [], connectors: CONNECTOR_CATALOG };
@@ -871,11 +995,16 @@ app.whenReady().then(async () => {
 
   ipcMain.handle(
     "auth:add",
-    async (_e, { profile, provider, apiKey, label }: { profile: string; provider: string; apiKey: string; label?: string }) =>
-      hermesAuthAdd(profile, provider, apiKey, label)
+    async (_e, { profile, provider, apiKey, label }: { profile: string; provider: string; apiKey: string; label?: string }) => {
+      await hermesEnsureProfile(profile);
+      return hermesAuthAdd(profile, provider, apiKey, label);
+    }
   );
 
-  ipcMain.handle("auth:list", async (_e, { profile }: { profile: string }) => hermesAuthList(profile));
+  ipcMain.handle("auth:list", async (_e, { profile }: { profile: string }) => {
+    await hermesEnsureProfile(profile);
+    return hermesAuthList(profile);
+  });
 
   ipcMain.handle(
     "auth:remove",

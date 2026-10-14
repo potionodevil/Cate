@@ -17,6 +17,7 @@ import { Select, SelectContent, SelectGroup, SelectItem, SelectLabel, SelectTrig
 import { Switch } from "@/components/ui/switch";
 import { ModelInput } from "@/components/ModelInput";
 import { cn } from "@/lib/utils";
+import { setSubagentMode, useSubagents } from "./subagentStore";
 
 // Providers supported by `hermes auth add --type api-key`. OAuth-type providers
 // (nous, openai-codex, qwen-oauth, minimax-oauth, copilot) are deliberately left
@@ -230,17 +231,17 @@ export function Settings({
 
   return (
     <Dialog open onOpenChange={(open) => !open && onClose()}>
-      <DialogContent onClick={(event) => event.stopPropagation()} className="hh-settings-dialog max-w-[min(680px,calc(100vw-24px))] max-h-[min(760px,calc(100dvh-24px))] min-w-0 overflow-hidden p-4 sm:p-5" aria-label="Einstellungen">
+      <DialogContent onClick={(event) => event.stopPropagation()} className="hh-settings-dialog max-w-[min(900px,calc(100vw-24px))] max-h-[min(760px,calc(100dvh-24px))] min-w-0 overflow-hidden p-4 sm:p-5" aria-label="Einstellungen">
         <DialogHeader>
           <DialogTitle>Einstellungen</DialogTitle>
         </DialogHeader>
 
-        <Tabs defaultValue="general" className="flex min-h-0 flex-1 flex-col gap-2">
-          <TabsList className="shrink-0">
+        <Tabs defaultValue="general" orientation="vertical" className="hh-settings-layout flex min-h-0 flex-1 flex-row gap-6">
+          <TabsList className="hh-settings-nav shrink-0">
             <TabsTrigger value="general">Allgemein</TabsTrigger>
             <TabsTrigger value="connections">Verbindungen</TabsTrigger>
             <TabsTrigger value="context">Kontext</TabsTrigger>
-            <TabsTrigger value="pet">Katze</TabsTrigger>
+            <TabsTrigger value="pet">Tier</TabsTrigger>
             <TabsTrigger value="credentials">Zugangsdaten</TabsTrigger>
           </TabsList>
 
@@ -322,6 +323,10 @@ export function Settings({
               </div>
               <Switch checked={motionEnabled} onCheckedChange={chooseMotion} aria-label="Animationen umschalten" />
             </div>
+
+            <Separator className="my-4" />
+
+            <SubagentModeSetting />
           </TabsContent>
 
           <TabsContent value="connections" className="hh-settings-scroll flex flex-col gap-2">
@@ -453,5 +458,23 @@ export function Settings({
         </Tabs>
       </DialogContent>
     </Dialog>
+  );
+}
+
+/** Wahl, wie Subagent-Terminals aufgehen: sofort neben der Session, sobald ein Agent einen Subagenten startet,
+ * oder erst, wenn man im Terminal über die Subagent-Zeile fährt und klickt. */
+function SubagentModeSetting() {
+  const { mode } = useSubagents();
+  return (
+    <>
+      <div className="hh-section-header">Subagenten</div>
+      <p className="hh-muted m-0 text-sm">Startet Claude Code oder Hermes einen Subagenten, zeigt Cate ihn in einem eigenen Mitlese-Terminal.</p>
+      <Tabs value={mode} onValueChange={(v) => setSubagentMode(v as "auto" | "hover")} className="mt-1">
+        <TabsList>
+          <TabsTrigger value="auto">Direkt in der Session öffnen</TabsTrigger>
+          <TabsTrigger value="hover">Erst bei Hover &amp; Klick</TabsTrigger>
+        </TabsList>
+      </Tabs>
+    </>
   );
 }

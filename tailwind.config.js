@@ -32,6 +32,7 @@ module.exports = {
         success: "var(--success)",
         warning: "var(--warning)"
       },
+      borderColor: { DEFAULT: "var(--border)" },
       borderRadius: {
         lg: "var(--radius-lg)",
         md: "var(--radius-md)",

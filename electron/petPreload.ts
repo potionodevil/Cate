@@ -7,7 +7,10 @@ import { contextBridge, ipcRenderer } from "electron";
 
 contextBridge.exposeInMainWorld("pet", {
   onNotify: (cb: (text: string) => void) => ipcRenderer.on("pet:notify", (_e, text: string) => cb(text)),
+  /** Warte-Erkennung: wie viele Sessions warten gerade auf eine Eingabe. */
+  onWaiting: (cb: (count: number) => void) => ipcRenderer.on("pet:waiting", (_e, count: number) => cb(count)),
   onSettings: (cb: (s: unknown) => void) => ipcRenderer.on("pet:settings", (_e, s: unknown) => cb(s)),
+  onCursor: (cb: (p: { x: number; y: number } | null) => void) => ipcRenderer.on("pet:cursor", (_e, p: { x: number; y: number } | null) => cb(p)),
   getSettings: () => ipcRenderer.invoke("pet:getSettings"),
   /** Window is click-through; only the cat, bubble and prompt catch the mouse. */
   hover: (over: boolean) => ipcRenderer.send("pet:hover", over),

@@ -5,7 +5,7 @@
  */
 import * as React from "react";
 import { Badge } from "@/components/ui/badge";
-import { Card, CardContent } from "@/components/ui/card";
+import { Separator } from "@/components/ui/separator";
 import { cn } from "@/lib/utils";
 
 export interface LiveMetric {
@@ -20,6 +20,10 @@ export interface LiveMetricsProps {
   vram?: LiveMetric | React.ReactNode;
   className?: string;
   compact?: boolean;
+  /** Überschreibt die automatisch ermittelte Anzeige „Agent aktiv“. */
+  agentActive?: boolean;
+  /** Überschreibt die automatisch ermittelte Anzeige „Kontext bereit“. */
+  contextReady?: boolean;
 }
 
 const defaults = {
@@ -28,6 +32,7 @@ const defaults = {
   vram: { value: "—", unit: "GB", status: "idle" as const },
 };
 
+/** Macht aus einem rohen Wert oder einem Metrik-Objekt immer ein einheitliches Objekt, damit die Anzeige keine Sonderfälle kennt. */
 function normalizeMetric(metric: LiveMetric | React.ReactNode | undefined, fallback: LiveMetric): LiveMetric {
   if (metric == null) return fallback;
   if (typeof metric === "object" && metric !== null && !React.isValidElement(metric) && "value" in metric) {
@@ -36,36 +41,92 @@ function normalizeMetric(metric: LiveMetric | React.ReactNode | undefined, fallb
   return { value: metric as React.ReactNode };
 }
 
-/** Header-ready live runtime metrics with stable monospace alignment. */
-export function LiveMetrics({ speed, ttft, vram, className, compact = false }: LiveMetricsProps) {
+/** Fragt alle paar Sekunden ab, ob irgendwo ein Agent läuft und ob Projekte (Kontext) vorhanden sind — so zeigen die Statuspillen in der Kopfzeile echten Zustand statt fester Texte. */
+function useRuntimeStatus(override: { agentActive?: boolean; contextReady?: boolean }) {
+  const [state, setState] = React.useState({ agentActive: false, contextReady: false });
+  React.useEffect(() => {
+    let cancelled = false;
+    async function poll() {
+      try {
+        const projects = await window.harness.listProjects();
+        const lists = await Promise.all(projects.map((p) => window.harness.listSessions(p.id)));
+        if (cancelled) return;
+        setState({
+          contextReady: projects.length > 0,
+          agentActive: lists.some((l) => l.some((s) => s.status === "running")),
+        });
+      } catch {
+        /* Anzeige bleibt beim letzten Stand */
+      }
+    }
+    void poll();
+    const id = setInterval(() => void poll(), 6000);
+    return () => {
+      cancelled = true;
+      clearInterval(id);
+    };
+  }, []);
+  return {
+    agentActive: override.agentActive ?? state.agentActive,
+    contextReady: override.contextReady ?? state.contextReady,
+  };
+}
+
+/** Pillenförmiges Statusabzeichen mit weichem Leuchten, solange der Zustand aktiv ist. */
+function StatusPill({ on, tone, children }: { on: boolean; tone: "accent" | "success"; children: React.ReactNode }) {
+  const color = tone === "accent" ? "var(--accent)" : "var(--success)";
+  return (
+    <Badge
+      variant="outline"
+      className={cn(
+        "h-[22px] gap-1.5 rounded-full border-[var(--border)] bg-[var(--bg-elevated)] px-2.5 text-[11px] font-medium text-[var(--text-muted)] transition-colors",
+        on && "text-[var(--text-primary)]"
+      )}
+      style={on ? { borderColor: `color-mix(in srgb, ${color} 35%, var(--border))`, background: `color-mix(in srgb, ${color} 9%, var(--bg-elevated))` } : undefined}
+    >
+      <span
+        aria-hidden
+        className={cn("h-1.5 w-1.5 rounded-full", on ? "hh-status-dot-live" : "bg-[var(--border-strong)]")}
+        style={on ? { background: color, boxShadow: `0 0 0 3px color-mix(in srgb, ${color} 14%, transparent), 0 0 10px -1px ${color}` } : undefined}
+      />
+      {children}
+    </Badge>
+  );
+}
+
+/** Kopfzeilen-Block: dezente Laufzeitmetriken (tok/s, VRAM, Latenz) plus die Statuspillen „Agent aktiv“ und „Kontext bereit“. */
+export function LiveMetrics({ speed, ttft, vram, className, compact = false, agentActive, contextReady }: LiveMetricsProps) {
+  const status = useRuntimeStatus({ agentActive, contextReady });
   const metrics = [
-    ["Geschwindigkeit", normalizeMetric(speed, defaults.speed)],
-    ["TTFT", normalizeMetric(ttft, defaults.ttft)],
+    ["tok/s", normalizeMetric(speed, defaults.speed)],
     ["VRAM", normalizeMetric(vram, defaults.vram)],
+    ["Latenz", normalizeMetric(ttft, defaults.ttft)],
   ] as const;
 
   return (
-    <Card className={cn("rounded-none border-x-0 border-t-0 bg-transparent shadow-none", className)}>
-      <CardContent className={cn("flex items-center gap-3 px-3 py-2", compact && "gap-2 py-1.5")}>
-        {metrics.map(([label, metric], index) => (
-          <React.Fragment key={label}>
-            {index > 0 && <span aria-hidden className="h-5 w-px bg-[var(--border)]" />}
-            <div className="flex min-w-0 items-center gap-2">
-              <span className="text-[10px] uppercase tracking-[0.08em] text-[var(--text-muted)]">{label}</span>
-              <Badge
-                variant="outline"
-                className={cn(
-                  "h-5 rounded-sm border-[var(--border)] px-1.5 font-mono text-[11px] font-normal tabular-nums text-[var(--text-primary)]",
-                  metric.status === "live" && "border-[var(--success)] text-[var(--success)]",
-                  metric.status === "warning" && "border-[var(--warning)] text-[var(--warning)]",
-                )}
-              >
-                {metric.value ?? "—"}{metric.unit && <span className="ml-1 text-[var(--text-secondary)]">{metric.unit}</span>}
-              </Badge>
-            </div>
-          </React.Fragment>
+    <div className={cn("flex items-center gap-3 px-2", compact && "gap-2.5", className)} style={{ WebkitAppRegion: "no-drag" } as React.CSSProperties}>
+      <div className="flex items-center gap-1.5">
+        <StatusPill on={status.agentActive} tone="accent">{status.agentActive ? "Agent aktiv" : "Agent inaktiv"}</StatusPill>
+        <StatusPill on={status.contextReady} tone="success">{status.contextReady ? "Kontext bereit" : "Kein Kontext"}</StatusPill>
+      </div>
+      <Separator orientation="vertical" className="h-4 bg-[var(--border)] max-[1080px]:hidden" />
+      <div className="flex items-center gap-3 max-[1080px]:hidden">
+        {metrics.map(([label, metric]) => (
+          <div key={label} className="flex items-baseline gap-1.5 font-mono tabular-nums" title={label}>
+            <span className="text-[10px] text-[var(--text-muted)]">{label}</span>
+            <span
+              className={cn(
+                "text-[11px] text-[var(--text-secondary)]",
+                metric.status === "live" && "text-[var(--success)]",
+                metric.status === "warning" && "text-[var(--warning)]"
+              )}
+            >
+              {metric.value ?? "—"}
+              {metric.unit && label !== "tok/s" && <span className="ml-0.5 text-[10px] text-[var(--text-muted)]">{metric.unit}</span>}
+            </span>
+          </div>
         ))}
-      </CardContent>
-    </Card>
+      </div>
+    </div>
   );
 }

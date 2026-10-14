@@ -93,20 +93,25 @@ test("reattaching a still-running session reconnects to its live pty instead of 
   assert.match(app, /window\.harness\.attachSessionPane\(session\.paneIds\[0\]\)/);
 });
 
-test("right-click on \"Neue Session starten\" offers other installed/connected agents", () => {
-  assert.match(app, /onContextMenu=\{openNewAgentPicker\}/);
+test("left-click on \"Anderen Agent wählen\" offers other installed/connected agents", () => {
+  // Geschützte Bedienkonvention: Menüs öffnen nur per Linksklick — der Agent-Picker
+  // ist deshalb ein eigener Button, kein onContextMenu mehr.
+  assert.match(app, /<Button variant="outline" onClick=\{openNewAgentPicker\}>Anderen Agent wählen<\/Button>/);
   assert.match(app, /<NewAgentPopover/);
+  assert.doesNotMatch(app, /onContextMenu/); // nie wieder Rechtsklick-Menüs
   assert.match(app, /window\.harness\.listAgentPresets\(\)/);
 });
 
-test("right-click on the session's \"+\" add-pane button also offers other agents", () => {
-  // The initial "Neue Session starten" button only exists before a
-  // project's first session; the per-session "+" is what gets clicked every
-  // day, so it needs the same right-click agent picker.
-  assert.match(layout, /onContextMenu=\{[\s\S]{0,80}onAddPanePicker/);
+test("left-click on the session's agent picker button also offers other agents", () => {
+  // The initial "Anderen Agent wählen" button only exists before a
+  // project's first session; the per-session picker is what gets clicked every
+  // day, so it needs the same agent picker (auch per Linksklick).
+  assert.match(layout, /\{onAddPanePicker && \(/);
+  assert.match(layout, /onClick=\{onAddPanePicker\}/);
   assert.match(app, /onRequestPanePicker:\s*handleRequestPanePicker/);
   assert.match(app, /onPaneStarted=\{handlePaneStarted\}/);
   const popover = readFileSync(new URL("../src/NewAgentPopover.tsx", import.meta.url), "utf8");
+  assert.doesNotMatch(popover, /onContextMenu/);
   assert.match(popover, /window\.harness\.splitSessionPane\(sessionId, paneId, "horizontal", preset\.id\)/);
 });
 
@@ -175,7 +180,8 @@ test("closing a tab never stops the session; stopped sessions stay listed, no au
 });
 
 test("sessions running at quit/reboot are respawned automatically with resume args", () => {
-  assert.ok(main.includes(`s.resume && s.status !== "running"`));
+  assert.ok(manager.includes(`s.resume && s.status !== "running"`));
+  assert.match(main, /sessionManager\.listRestorable\(/);
   assert.match(main, /RESUME_ARGS/);
   assert.match(main, /setLoginItemSettings/);
 });

@@ -6,6 +6,11 @@
 import React from "react";
 import { createRoot } from "react-dom/client";
 import "@xterm/xterm/css/xterm.css";
+import "@fontsource/pixelify-sans/400.css";
+import "@fontsource/pixelify-sans/500.css";
+import "@fontsource/pixelify-sans/600.css";
+import "@fontsource/vt323/400.css";
+import "@fontsource-variable/geist-mono";
 import "@fontsource/silkscreen/400.css";
 import "@fontsource/silkscreen/700.css";
 import "./theme.css";
@@ -33,6 +38,10 @@ window.addEventListener("error", (event) => {
     event.preventDefault();
   }
 });
+
+// Eine Datei, die neben einem Terminal losgelassen wird, darf das Fenster nicht auf diese Datei umleiten (Electron-Standard) — dann wäre die ganze Oberfläche weg.
+window.addEventListener("dragover", (e) => e.preventDefault());
+window.addEventListener("drop", (e) => e.preventDefault());
 
 const root = createRoot(document.getElementById("root")!);
 root.render(

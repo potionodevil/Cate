@@ -4,12 +4,18 @@
  * Nutzung ohne ausdrückliche schriftliche Erlaubnis von R.S. ist untersagt.
  */
 import { CatSprite } from "./CatSprite";
+import { registerSubagentLinks } from "./subagentLinks";
+import { AttachButton, filesToResult, insertAttachment } from "./AttachButton";
 import React, { useEffect, useRef, useState } from "react";
 import { Terminal } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import { IconClose, IconExport, IconSplitHorizontal, IconSplitVertical } from "./icons";
 import { MoreVertical } from "lucide-react";
 import { buildTerminalTheme } from "./terminalTheme";
+// @ts-expect-error - plain untyped .mjs helper (testbar ohne DOM)
+import { classifyTerminalKey, shouldOpenImproveMenu } from "./terminalKeys.mjs";
+// @ts-expect-error - plain untyped .mjs helper (testbar ohne DOM)
+import { looksLikeWaitPrompt, tailOfChunk, WAIT_SILENCE_MS } from "./waitDetection.mjs";
 import { Button } from "@/components/ui/button";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 
@@ -46,9 +52,18 @@ export function TerminalPane({ paneId, sessionId, label, presetId, profile, mode
   const [displayLabel, setDisplayLabel] = useState(label);
   // "arbeitet" = output is flowing; "bereit" = quiet again (agent waits for input).
   const [busy, setBusy] = useState(false);
+  // "wartet auf dich" = Prompt-Muster im Output gesehen + danach Stille.
+  const [waiting, setWaiting] = useState(false);
+  const [dropOver, setDropOver] = useState(false);
   const lastInputRef = useRef(0);
+  // Renderer-seitige Warte-Erkennung: Prompt gesehen? Letzter Daten-Zeitpunkt?
+  const waitPromptSeenRef = useRef(false);
+  const lastDataAtRef = useRef(0);
+  // busy in einem Ref spiegeln, damit der quietTimer-Callback den aktuellen
+  // Wert liest statt einer stale Closure.
+  const busyRef = useRef(false);
   const [modelOverride, setModelOverride] = useState(model || "");
-  // Right-click on selected terminal text -> "Prompt verbessern" popover.
+  // Linksklick-Auswahl im Terminal -> "Prompt verbessern" popover.
   const [improve, setImprove] = useState<{
     x: number;
     y: number;
@@ -57,12 +72,53 @@ export function TerminalPane({ paneId, sessionId, label, presetId, profile, mode
     result?: string;
   } | null>(null);
 
-  function openImproveMenu(e: React.MouseEvent) {
-    const selection = termRef.current?.getSelection().trim();
-    if (!selection) return; // no selection: keep the default behaviour
+  // Linksklick-Ziehen (Auswahl) bzw. Doppelklick auf Text oeffnet das Menue.
+  // Rechtsklick auf markierten Text oeffnet das Menue ebenfalls (wie urspruenglich);
+  // ohne Auswahl fuegt Rechtsklick die Zwischenablage ein.
+  const downRef = useRef<{ x: number; y: number } | null>(null);
+
+  function onBodyMouseDown(e: React.MouseEvent) {
+    if (e.button !== 0) return;
+    if ((e.target as HTMLElement).closest('[role="dialog"]')) return;
+    downRef.current = { x: e.clientX, y: e.clientY };
+    setImprove((cur) => (cur && cur.phase === "menu" ? null : cur));
+    termRef.current?.focus();
+  }
+
+  function onBodyMouseUp(e: React.MouseEvent) {
+    if ((e.target as HTMLElement).closest('[role="dialog"]')) return;
+    const down = downRef.current;
+    downRef.current = null;
+    const moved = !!down && Math.hypot(e.clientX - down.x, e.clientY - down.y) > 3;
+    const { button, detail, clientX, clientY } = e;
+    const rect = e.currentTarget.getBoundingClientRect();
+    // xterm finalisiert die Auswahl erst im document-mouseup: danach lesen.
+    setTimeout(() => {
+      const selection = termRef.current?.getSelection().trim() ?? "";
+      if (!shouldOpenImproveMenu({ button, moved, detail, selection })) return;
+      setImprove({ x: Math.max(4, Math.min(clientX - rect.left, rect.width - 280)), y: clientY - rect.top, selection, phase: "menu" });
+    }, 0);
+  }
+
+  function onBodyContextMenu(e: React.MouseEvent) {
+    if ((e.target as HTMLElement).closest('[role="dialog"]')) return;
     e.preventDefault();
-    const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
-    setImprove({ x: Math.min(e.clientX - rect.left, rect.width - 280), y: e.clientY - rect.top, selection, phase: "menu" });
+    const selection = termRef.current?.getSelection().trim() ?? "";
+    if (!selection) {
+      void pasteFromClipboard();
+      return;
+    }
+    const rect = e.currentTarget.getBoundingClientRect();
+    setImprove({ x: Math.max(4, Math.min(e.clientX - rect.left, rect.width - 280)), y: e.clientY - rect.top, selection, phase: "menu" });
+  }
+
+  async function pasteFromClipboard() {
+    try {
+      const text = await navigator.clipboard.readText();
+      if (text) termRef.current?.paste(text);
+    } catch (err) {
+      console.error("Einfuegen fehlgeschlagen:", err);
+    }
   }
 
   async function runImprove() {
@@ -86,6 +142,22 @@ export function TerminalPane({ paneId, sessionId, label, presetId, profile, mode
   useEffect(() => {
     setDisplayLabel(label);
   }, [label]);
+
+  // busy-Ref synchron halten (für den quietTimer-Callback ohne stale Closure).
+  useEffect(() => {
+    busyRef.current = busy;
+  }, [busy]);
+
+  /** Warte-Zustand betreten/verlassen: UI-State + globales Event (Sidebar)
+   * + Main-Prozess (Katze). Optional-chained, damit Tests/SSR nie crashen. */
+  function setWaitingState(next: boolean) {
+    setWaiting((cur) => {
+      if (cur === next) return cur;
+      window.dispatchEvent(new CustomEvent("hh:wait", { detail: { sessionId, waiting: next } }));
+      window.harness?.setPaneWaitState?.(sessionId, next);
+      return next;
+    });
+  }
 
   useEffect(() => {
     const dispose = window.harness.onSessionRenamed(({ id, label: newLabel }) => {
@@ -124,6 +196,35 @@ export function TerminalPane({ paneId, sessionId, label, presetId, profile, mode
       // once the container settles.
     }
     termRef.current = term;
+    const subagentLinks = registerSubagentLinks(term);
+
+    // Ctrl+C kopiert bei Auswahl (sonst SIGINT), Ctrl+V / Ctrl+Shift+V / Shift+Insert fuegt ein.
+    // preventDefault verhindert ein zweites, natives paste-Event (Doppeleinfuegen).
+    term.attachCustomKeyEventHandler((ev) => {
+      const action = classifyTerminalKey(ev, term.hasSelection());
+      if (action === "paste") {
+        ev.preventDefault();
+        void pasteFromClipboard();
+        return false;
+      }
+      if (action === "copy") {
+        ev.preventDefault();
+        void navigator.clipboard.writeText(term.getSelection()).catch(() => {});
+        term.clearSelection();
+        return false;
+      }
+      return true;
+    });
+    // Mittlere Maustaste fuegt ein (Linux/Windows-Terminal-Konvention).
+    const onAuxClick = (ev: MouseEvent) => {
+      if (ev.button !== 1) return;
+      ev.preventDefault();
+      void pasteFromClipboard();
+      term.focus();
+    };
+    const hostEl = containerRef.current;
+    hostEl.addEventListener("auxclick", onAuxClick);
+    term.focus();
 
     let disposeData = () => {};
     let disposeExit = () => {};
@@ -141,9 +242,20 @@ export function TerminalPane({ paneId, sessionId, label, presetId, profile, mode
       disposeData = window.harness.onSessionPaneData(id, (data) => {
         term.write(data);
         if (Date.now() - lastInputRef.current < 300) return; // keystroke echo is not agent work
+        // Warte-Erkennung: jede neue Agent-Ausgabe beendet den Warte-Zustand.
+        lastDataAtRef.current = Date.now();
+        setWaitingState(false);
+        if (looksLikeWaitPrompt(tailOfChunk(data))) waitPromptSeenRef.current = true;
         setBusy(true);
         clearTimeout(quietTimer);
-        quietTimer = setTimeout(() => setBusy(false), 2500);
+        quietTimer = setTimeout(() => {
+          // Ruhig geworden: Prompt gesehen + Schwelle erreicht -> "wartet auf dich".
+          const silence = Date.now() - lastDataAtRef.current;
+          if (busyRef.current && waitPromptSeenRef.current && silence >= WAIT_SILENCE_MS) {
+            setWaitingState(true);
+          }
+          setBusy(false);
+        }, 2500);
       });
       const baseDispose = disposeData;
       disposeData = () => {
@@ -153,9 +265,13 @@ export function TerminalPane({ paneId, sessionId, label, presetId, profile, mode
       disposeExit = window.harness.onSessionPaneExit(id, () => {
         setStatus("exited");
         setBusy(false);
+        setWaitingState(false);
       });
       term.onData((data) => {
         lastInputRef.current = Date.now();
+        // Nutzer antwortet -> Prompt ist beantwortet, Erkennung zurücksetzen.
+        waitPromptSeenRef.current = false;
+        setWaitingState(false);
         window.harness.writeSessionPane(id, data);
       });
       resizeObserver = new ResizeObserver(() => {
@@ -193,9 +309,13 @@ export function TerminalPane({ paneId, sessionId, label, presetId, profile, mode
     return () => {
       cancelled = true;
       themeObserver.disconnect();
+      hostEl.removeEventListener("auxclick", onAuxClick);
       resizeObserver?.disconnect();
       disposeData();
       disposeExit();
+      // Beim Unmount nie einen „wartet"-Zähler in Sidebar/Katze zurücklassen.
+      setWaitingState(false);
+      subagentLinks.dispose();
       term.dispose();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -225,12 +345,36 @@ export function TerminalPane({ paneId, sessionId, label, presetId, profile, mode
     await window.harness.stopSession(sessionId);
     setStatus("stopped");
     setBusy(false);
+    setWaitingState(false);
   }
 
-  const state = status === "running" ? (busy ? "working" : "ready") : status;
+  // waiting liegt zwischen "arbeitet" und "bereit": Session läuft, braucht aber
+  // Eingabe. waiting hat Vorrang vor busy, weil der quietTimer gleichzeitig
+  // setWaiting(true) und setBusy(false) auslöst.
+  const state = status === "running" ? (waiting ? "waiting" : busy ? "working" : "ready") : status;
+
+  // Zustand an die Sidebar melden: dort entscheidet er über Zeichen und Text der Session („arbeitet“, „wartet“, „fertig“).
+  useEffect(() => {
+    window.dispatchEvent(new CustomEvent("hh:pane-state", { detail: { sessionId, state } }));
+  }, [sessionId, state]);
 
   return (
-    <div className="hh-pane" data-state={state}>
+    <div
+      className="hh-pane"
+      data-state={state}
+      onDragOver={(e) => {
+        if (status !== "running" || !e.dataTransfer.types.includes("Files")) return;
+        e.preventDefault();
+        setDropOver(true);
+      }}
+      onDragLeave={(e) => { if (!e.currentTarget.contains(e.relatedTarget as Node)) setDropOver(false); }}
+      onDrop={(e) => {
+        if (status !== "running" || e.dataTransfer.files.length === 0) return;
+        e.preventDefault();
+        setDropOver(false);
+        void filesToResult([...e.dataTransfer.files]).then((res) => insertAttachment(paneId, res));
+      }}
+    >
       <div className="hh-pane-head">
         <PaneState state={state} />
         <span className="hh-pane-title" title={displayLabel}>
@@ -239,6 +383,7 @@ export function TerminalPane({ paneId, sessionId, label, presetId, profile, mode
         <span className="hh-pane-preset">{presetId}</span>
 
         <div className="hh-pane-actions">
+          <AttachButton paneId={paneId} disabled={status !== "running"} />
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
               <Button
@@ -306,12 +451,30 @@ export function TerminalPane({ paneId, sessionId, label, presetId, profile, mode
           <div className="hh-muted">Diese Session ist beendet. Verlauf in der Sessions-Ansicht einsehbar.</div>
         </div>
       ) : (
-        <div className="hh-pane-body" onContextMenu={openImproveMenu}>
+        <div
+          className="hh-pane-body"
+          onMouseDown={onBodyMouseDown}
+          onMouseUp={onBodyMouseUp}
+          onContextMenu={onBodyContextMenu}
+          onPasteCapture={(e) => {
+            // Strg+V mit Bild oder Datei in der Zwischenablage: als Anhang einfügen statt nichts zu tun (xterm kann nur Text).
+            const files = [...e.clipboardData.files];
+            if (files.length === 0 || status !== "running") return;
+            e.preventDefault();
+            e.stopPropagation();
+            void filesToResult(files).then((res) => insertAttachment(paneId, res));
+          }}
+        >
+          {dropOver && (
+            <div className="hh-pane-drop" aria-hidden>
+              <span>Loslassen, um es dem Agenten als Kontext zu geben</span>
+            </div>
+          )}
           <div ref={containerRef} className="hh-term" />
-          {state === "working" && (
+          {(state === "working" || state === "waiting") && (
             <div className="hh-working" role="status" aria-live="polite">
               <CatSprite scale={1.5} walk />
-              <span>Agent arbeitet</span>
+              <span>{state === "waiting" ? "Agent wartet auf dich" : "Agent arbeitet"}</span>
               <span className="hh-working-dots" aria-hidden><i /><i /><i /></span>
             </div>
           )}
@@ -368,11 +531,12 @@ export function TerminalPane({ paneId, sessionId, label, presetId, profile, mode
   );
 }
 
-type PaneStateName = "starting" | "working" | "ready" | "exited" | "stopped";
+type PaneStateName = "starting" | "working" | "waiting" | "ready" | "exited" | "stopped";
 
 const STATE_LABEL: Record<PaneStateName, string> = {
   starting: "startet",
   working: "arbeitet",
+  waiting: "wartet",
   ready: "bereit",
   exited: "beendet",
   stopped: "gestoppt"
@@ -382,6 +546,8 @@ const STATE_LABEL: Record<PaneStateName, string> = {
 const GLYPH: Record<PaneStateName, [number, number][]> = {
   starting: [[0,0],[1,0],[2,0],[3,0],[4,0],[5,0],[6,0],[0,6],[1,6],[2,6],[3,6],[4,6],[5,6],[6,6],[0,1],[0,2],[0,3],[0,4],[0,5],[6,1],[6,2],[6,3],[6,4],[6,5]],
   working: [[0,3],[1,3],[3,3],[4,3],[6,3]],
+  // Fragezeichen: klar eigene Form, kein Farbhinweis nötig.
+  waiting: [[1,0],[2,0],[3,0],[4,0],[0,1],[5,1],[5,2],[2,3],[3,3],[4,3],[3,4],[3,6]],
   ready: [[0,3],[1,4],[2,5],[3,4],[4,3],[5,2],[6,1]],
   exited: [[1,1],[2,2],[3,3],[4,4],[5,5],[5,1],[4,2],[2,4],[1,5]],
   stopped: [[1,1],[2,1],[3,1],[4,1],[5,1],[1,2],[2,2],[3,2],[4,2],[5,2],[1,3],[2,3],[3,3],[4,3],[5,3],[1,4],[2,4],[3,4],[4,4],[5,4],[1,5],[2,5],[3,5],[4,5],[5,5]]

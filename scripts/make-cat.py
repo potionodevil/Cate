@@ -3,7 +3,7 @@
 # Nutzung ohne ausdrückliche schriftliche Erlaubnis von R.S. ist untersagt.
 # Generates assets/catFrames.js: the shared 32x24 pixel cat (desktop pet + Greeting).
 #   python scripts/make-cat.py
-# o outline  w fur  g shade  e eye  h shine  p pink  n nose  c collar  y bell  t tongue  k sparkle  z sleep-z
+# i iris  m whisker  o outline  w fur  g shade  e eye  h shine  p pink  n nose  c collar  y bell  t tongue  k sparkle  z sleep-z
 import json, math
 W, H = 32, 24
 
@@ -65,13 +65,17 @@ def build(pose, step=0, tail=0):
     put({(hx - 5, hy - 4), (hx - 4, hy - 4), (hx - 4, hy - 3), (hx + 5, hy - 4), (hx + 4, hy - 4), (hx + 4, hy - 3)}, "p")
     put({(hx - 6, hy + 2), (hx + 5, hy + 2)}, "p")
     put({(hx, hy + 2), (hx - 1, hy + 2)}, "n")
+    # Tabby-Stirnzeichnung + Schnurrhaare (außerhalb des Kopfes, daher direkt ins Raster)
+    put({(hx, hy - 5), (hx, hy - 4), (hx - 2, hy - 5), (hx + 2, hy - 5)}, "g")
+    for dx in (-10, -9, 9, 10):
+        for dy in (2, 4): grid.setdefault((hx + dx, hy + dy), "m") if 0 <= hx + dx < W else None
     return grid, hx, hy
 
 def eyes(grid, hx, hy, mode):
     L, R = hx - 4, hx + 2
     for ex in (L, R):
         if mode == "open":
-            for dx, dy, c in ((0, 0, "h"), (1, 0, "e"), (0, 1, "e"), (1, 1, "e")): grid[(ex + dx, hy - 1 + dy)] = c
+            for dx, dy, c in ((0, 0, "h"), (1, 0, "i"), (0, 1, "i"), (1, 1, "i"), (0, 2, "e"), (1, 2, "e")): grid[(ex + dx, hy - 1 + dy)] = c
         else:  # closed: happy arc
             for dx in (0, 1): grid[(ex + dx, hy)] = "o"
 
@@ -94,7 +98,7 @@ for name, pose, kw in (("sit", "sit", {}), ("sitTail", "sit", {"tail": 1}), ("wa
 for i, up in enumerate((False, True)):
     g, hx, hy = build("sit", tail=i); eyes(g, hx, hy, "shut"); paw(g, hx, hy, up)
     g[(hx + 1, hy + 3)] = "t"; g[(hx + 1, hy + 4 - i)] = "t"
-    g[(hx + 7, hy - 7)] = "k" if i else "."
+    if i: g[(hx + 7, hy - 7)] = "k"
     F["groom" + "AB"[i]] = render(g)
 g, hx, hy = build("sit"); eyes(g, hx, hy, "shut"); g[(hx + 8, hy - 8)] = "z"; F["sleep"] = render(g)
 

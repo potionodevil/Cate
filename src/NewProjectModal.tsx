@@ -5,7 +5,7 @@
  */
 import React, { useEffect, useState } from "react";
 import type { Project } from "./types";
-import { IconFolder, IconGit, IconChevronRight } from "./icons";
+import { IconFolder, IconGit } from "./icons";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -64,7 +64,6 @@ export function NewProjectModal({
 
   // Standardeinstellungen (Feature B) — collapsed by default, so the dialog
   // doesn't get overwhelming for the common "just a name + folder" case.
-  const [showAdvanced, setShowAdvanced] = useState(isEdit);
   const [icon, setIcon] = useState(editProject?.icon ?? "");
   const [defaultModel, setDefaultModel] = useState(editProject?.defaultModel ?? "");
   const [modelGroups, setModelGroups] = useState<{ provider: string; models: string[] }[]>([]);
@@ -217,7 +216,7 @@ export function NewProjectModal({
 
   return (
     <Dialog open onOpenChange={(open) => !open && onClose()}>
-      <DialogContent className="max-w-[520px]" aria-label={isEdit ? "Projekt bearbeiten" : "Neues Projekt"}>
+      <DialogContent className="hh-newproj max-w-[520px]" aria-label={isEdit ? "Projekt bearbeiten" : "Neues Projekt"}>
         {busy && (
           <div
             role="status"
@@ -232,12 +231,16 @@ export function NewProjectModal({
             </div>
           </div>
         )}
-        <DialogHeader>
-          <DialogTitle>{isEdit ? "Projekt bearbeiten" : "Neues Projekt"}</DialogTitle>
+        <DialogHeader className="hh-newproj-head">
+          <span className="hh-newproj-cat" aria-hidden><CatSprite scale={2} minimal /></span>
+          <span>
+            <DialogTitle>{isEdit ? "Projekt bearbeiten" : "Neues Projekt anlegen"}</DialogTitle>
+            <p className="hh-newproj-sub">Ein Projekt bündelt Sessions und Kontext eines Ordners. Cate legt dafür ein eigenes Hermes-Profil an.</p>
+          </span>
         </DialogHeader>
 
         <div className="flex flex-col gap-3">
-          <div className="flex flex-col gap-1">
+          <div className="flex flex-col gap-1.5">
             <Label>Name</Label>
             <Input autoFocus placeholder="Projektname" value={newName} onChange={(e) => setNewName(e.target.value)} />
           </div>
@@ -250,7 +253,8 @@ export function NewProjectModal({
               </div>
             </div>
           ) : (
-            <>
+            <div className="flex flex-col gap-1.5">
+              <Label>Quelle</Label>
               <Tabs value={createMode} onValueChange={(v) => setCreateMode(v as CreateMode)}>
                 <TabsList>
                   <TabsTrigger value="folder" className="gap-1">
@@ -291,21 +295,15 @@ export function NewProjectModal({
                   {newFolder && <div className="hh-muted text-xs">Geklont nach: {newFolder}</div>}
                 </div>
               )}
-            </>
+            </div>
           )}
 
-          <div>
-            <Button variant="secondary" size="sm" onClick={() => setShowAdvanced((v) => !v)} className="gap-1">
-              <span className={showAdvanced ? "inline-flex rotate-90 transition-transform duration-fast" : "inline-flex transition-transform duration-fast"}>
-                <IconChevronRight size={12} />
-              </span>
-              Standardeinstellungen
-            </Button>
-
-            {showAdvanced && (
-              <div className="mt-2 flex flex-col gap-2 p-3 bg-[var(--bg-elevated-2)] border border-[var(--border)] rounded-md">
+          <div className="hh-newproj-section">
+            <div className="hh-newproj-section-title">Standardeinstellungen <span>optional</span></div>
+            {(
+              <div className="flex flex-col gap-2">
                 <div className="flex gap-2 items-start">
-                  <div className="flex flex-col gap-1 w-[90px]">
+                  <div className="flex flex-col gap-1 w-[130px]">
                     <Label>Icon</Label>
                     <div className="flex gap-1 items-center">
                       <Input placeholder="z. B. 🚀" maxLength={4} value={icon} onChange={(e) => setIcon(e.target.value)} />
@@ -363,9 +361,14 @@ export function NewProjectModal({
             </div>
           )}
 
-          <Button disabled={busy} onClick={submit} className="justify-center">
-            {busy ? "Speichere..." : isEdit ? "Änderungen speichern" : "Projekt anlegen"}
-          </Button>
+          <div className="hh-newproj-actions">
+            <Button variant="secondary" disabled={busy} onClick={onClose}>
+              Abbrechen
+            </Button>
+            <Button disabled={busy} onClick={submit}>
+              {busy ? "Speichere..." : isEdit ? "Änderungen speichern" : "Projekt anlegen"}
+            </Button>
+          </div>
         </div>
       </DialogContent>
     </Dialog>

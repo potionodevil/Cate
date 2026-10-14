@@ -20,6 +20,11 @@ export interface SessionSnapshot {
   paneIds: string[];
   contextPath: string;
   archivedAt: number | null;
+  /** Optional (older snapshots lack them): what reattach needs without SQLite. */
+  presetId?: string | null;
+  profile?: string | null;
+  model?: string | null;
+  resume?: boolean;
 }
 
 function snapshotDir(): string {
@@ -45,7 +50,11 @@ export function writeSessionSnapshot(record: SessionRecord, contextPath: string)
     endedAt: record.endedAt ?? Date.now(),
     paneIds: record.paneIds,
     contextPath,
-    archivedAt: record.archivedAt ?? null
+    archivedAt: record.archivedAt ?? null,
+    presetId: record.presetId ?? null,
+    profile: record.profile ?? null,
+    model: record.model ?? null,
+    resume: !!record.resume
   };
   const path = join(dir, `${record.id}.json`);
   writeFileSync(path, JSON.stringify(snap, null, 2), "utf-8");
@@ -99,7 +108,11 @@ export function loadSessionSnapshots(projectId?: string): SessionRecord[] {
         paneIds: snap.paneIds,
         contextPath: snap.contextPath,
         expiresAt: null,
-        archivedAt: snap.archivedAt ?? null
+        archivedAt: snap.archivedAt ?? null,
+        presetId: snap.presetId ?? null,
+        profile: snap.profile ?? null,
+        model: snap.model ?? null,
+        resume: !!snap.resume
       });
     } catch {
       /* skip malformed snapshots */

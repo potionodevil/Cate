@@ -30,6 +30,14 @@ export function stripAnsi(input: string): string {
   return input.replace(ANSI_PATTERN, "").replace(CONTROL_CHARS, "");
 }
 
+/** Lines that only draw TUI chrome (rules, boxes, padding, ellipsis) carry no
+ * information but, in a redraw-heavy TUI like Hermes, make up most of a raw
+ * backlog — they used to fill the whole 20k cap and push the real dialogue
+ * out ("Kontext wird nach Neustart nicht geladen"). */
+const DECORATIVE_LINE = /^[\s\u2500-\u259f\u2026\u00b7\-=_*~|+.]+$/;
+const DEDUPE_WINDOW = 12;
+const DEDUPE_MIN_CHARS = 12;
+
 /** Compact raw terminal text into a token-frugal summary string. Pure
  * function, no I/O, so it's independently unit-testable. */
 export function compactTerminalLog(raw: string, maxChars = DEFAULT_MAX_CHARS): string {
@@ -40,6 +48,7 @@ export function compactTerminalLog(raw: string, maxChars = DEFAULT_MAX_CHARS): s
   let blankRun = 0;
   let prevLine: string | null = null;
   let repeatCount = 0;
+  const recent: string[] = [];
 
   const flushRepeat = () => {
     if (prevLine !== null && repeatCount > 1) {
@@ -50,8 +59,14 @@ export function compactTerminalLog(raw: string, maxChars = DEFAULT_MAX_CHARS): s
   };
 
   for (const rawLine of rawLines) {
-    const line = rawLine.length > MAX_LINE_CHARS ? rawLine.slice(0, MAX_LINE_CHARS) + " …" : rawLine;
-    const trimmed = line.trim();
+    // Normalise TUI padding: drop trailing "   …" fillers, collapse inner runs
+    // of spaces (keep leading indentation), then cap the length.
+    let norm = rawLine.replace(/\s+\u2026\s*$/, "").replace(/\s+$/, "");
+    const indent = norm.match(/^\s*/)![0];
+    norm = indent + norm.slice(indent.length).replace(/ {3,}/g, " ");
+    const trimmed = norm.trim();
+    if (trimmed !== "" && DECORATIVE_LINE.test(trimmed)) continue;
+    const line = norm.length > MAX_LINE_CHARS ? norm.slice(0, MAX_LINE_CHARS) + " \u2026" : norm;
 
     if (trimmed === "") {
       blankRun++;
@@ -64,9 +79,16 @@ export function compactTerminalLog(raw: string, maxChars = DEFAULT_MAX_CHARS): s
       repeatCount++;
       continue;
     }
+    // Same long line seen a few lines ago (TUI redraws status/prompt lines
+    // between every real line): keep only the first occurrence.
+    if (trimmed.length >= DEDUPE_MIN_CHARS && recent.includes(trimmed)) continue;
     flushRepeat();
     prevLine = line;
     repeatCount = 1;
+    if (trimmed.length >= DEDUPE_MIN_CHARS) {
+      recent.push(trimmed);
+      if (recent.length > DEDUPE_WINDOW) recent.shift();
+    }
   }
   flushRepeat();
 
@@ -75,6 +97,47 @@ export function compactTerminalLog(raw: string, maxChars = DEFAULT_MAX_CHARS): s
     result = `[... gekürzt, zeige letzte ${maxChars} von ${result.length} Zeichen ...]\n` + result.slice(-maxChars);
   }
   return result;
+}
+
+const TRUNCATION_NOTICE = /^\[\.\.\. gekürzt, zeige letzte \d+ von \d+ Zeichen \.\.\.\]$/;
+const PANE_MARKER = /^--- Pane [0-9a-f-]+ ---$/i;
+const RESTORE_SEPARATOR = "--- Neustart: ab hier neuer Prozess ---";
+
+/** Strips bookkeeping lines (pane markers, earlier truncation notices) so
+ * stored context can be re-fed to an agent or merged without piling up. */
+function stripContextMarkers(text: string): string {
+  return text
+    .split(/\r?\n/)
+    .filter((l) => !TRUNCATION_NOTICE.test(l.trim()) && !PANE_MARKER.test(l.trim()))
+    .join("\n")
+    .trim();
+}
+
+/** Joins the context saved before a restart with the new process's own
+ * compacted output. Without this a restored session's first checkpoint
+ * overwrote its .air file with just the fresh banner, so the SECOND restart
+ * had no history left. Keeps the tail when the sum exceeds `maxChars`. */
+export function mergeRestoredContext(previous: string, current: string, maxChars = DEFAULT_MAX_CHARS): string {
+  const prev = stripContextMarkers(previous);
+  const cur = current.trim();
+  if (!prev) return cur;
+  if (!cur) return prev;
+  const joined = `${prev}\n${RESTORE_SEPARATOR}\n${cur}`;
+  if (joined.length <= maxChars) return joined;
+  const tail = joined.slice(-maxChars);
+  const nl = tail.indexOf("\n");
+  return `[... gekürzt, zeige letzte ${maxChars} von ${joined.length} Zeichen ...]\n` + (nl >= 0 && nl < 200 ? tail.slice(nl + 1) : tail);
+}
+
+/** Context text for the first-turn seed of a restored agent. The seed travels
+ * on the Windows command line (limit ~32k chars incl. project context), so it
+ * is capped hard and cut on a line boundary, keeping the most recent part. */
+export function buildRestoreContext(saved: string, maxChars = 8000): string {
+  const clean = stripContextMarkers(saved);
+  if (clean.length <= maxChars) return clean;
+  const tail = clean.slice(-maxChars);
+  const nl = tail.indexOf("\n");
+  return nl >= 0 ? tail.slice(nl + 1) : tail;
 }
 
 /** Compact prose/instructions text (project-level "memory"), as opposed to

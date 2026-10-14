@@ -53,11 +53,10 @@ function action<T extends (...args: never[]) => unknown>(callback: T | undefined
 
 /**
  * Compact, keyboard-friendly power menu for sidebar/session/file rows.
- * A LEFT-click on the wrapped content always selects/opens it normally
- * (the row's own onClick, e.g. project selection) — the menu never
- * intercepts that. A RIGHT-click (`onContextMenu`) opens this menu instead,
- * with the native browser/OS context menu suppressed and the event kept
- * from bubbling further (no double-handling by an ancestor row).
+ * Öffnet sich per Rechtsklick (Kontextmenü), wie man es von jedem Programm
+ * erwartet; der Linksklick bleibt der Zeile selbst (Projekt wählen, Session
+ * öffnen). Die Ignorier-Liste nennt nur echte Bedienelemente, damit deren
+ * eigenes Rechtsklick-Verhalten (z. B. in Eingabefeldern) erhalten bleibt.
  */
 export function PowerContextMenu({
   kind,
@@ -104,11 +103,16 @@ export function PowerContextMenu({
     <DropdownMenu open={open} onOpenChange={setOpen}>
       <span
         className={className}
+        data-power-menu={kind}
         onContextMenu={(event) => {
+          const target = event.target;
+          if (target instanceof Element) {
+            if (target.closest("button,a,input,textarea,select,[data-power-menu-ignore]")) return;
+            // Hintergrund-Menue nur auf freier Flaeche, nicht ueber Projekt-/Session-Zeilen.
+            if (kind === "background" && target.closest('[data-power-menu="project"],[data-power-menu="session"]')) return;
+          }
           event.preventDefault();
           event.stopPropagation();
-          const target = event.target;
-          if (target instanceof Element && target.closest("button,a,input,textarea,select,[data-power-menu-ignore]")) return;
           setPosition({ x: event.clientX, y: event.clientY });
           setOpen(true);
         }}
@@ -134,21 +138,21 @@ export function PowerContextMenu({
           <DropdownMenuItem onSelect={() => action(onOpenInSession, targetId)}>
             <FolderOpen />
             <span>In Sitzung öffnen</span>
-            <DropdownMenuShortcut>↵</DropdownMenuShortcut>
+            <DropdownMenuShortcut>Enter</DropdownMenuShortcut>
           </DropdownMenuItem>
         )}
         {canAddFile && onAddFile && (
           <DropdownMenuItem onSelect={() => void addFile()}>
             <FilePlus2 />
             <span>Datei hinzufügen</span>
-            <DropdownMenuShortcut>⌘O</DropdownMenuShortcut>
+            <DropdownMenuShortcut>Strg+O</DropdownMenuShortcut>
           </DropdownMenuItem>
         )}
         {kind === "project" && onOpenInSession && (
           <DropdownMenuItem onSelect={() => action(onOpenInSession, targetId)}>
             <Layers3 />
             <span>Neue Sitzung starten</span>
-            <DropdownMenuShortcut>⌘N</DropdownMenuShortcut>
+            <DropdownMenuShortcut>Strg+N</DropdownMenuShortcut>
           </DropdownMenuItem>
         )}
         {onDelete && (
@@ -160,7 +164,7 @@ export function PowerContextMenu({
             >
               <Trash2 />
               <span>{kind === "file" ? "Datei entfernen" : "Löschen"}</span>
-              <DropdownMenuShortcut>⌫</DropdownMenuShortcut>
+              <DropdownMenuShortcut>Entf</DropdownMenuShortcut>
             </DropdownMenuItem>
           </>
         )}

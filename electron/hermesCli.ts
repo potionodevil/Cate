@@ -28,6 +28,31 @@ export async function hermesProfileCreate(name: string): Promise<{ ok: boolean; 
   return createOrAdoptProfile(name);
 }
 
+/** Ordner eines Hermes-Profils (dort legt `hermes profile create` alles ab). */
+function profileDir(name: string): string {
+  return join(process.env.LOCALAPPDATA ?? join(os.homedir(), "AppData", "Local"), "hermes", "profiles", name);
+}
+
+const ensuring = new Map<string, Promise<{ ok: boolean; message: string }>>();
+
+/** Sorgt dafür, dass das Hermes-Profil eines Projekts wirklich existiert, bevor eine Session oder die Zugangsdaten es brauchen.
+ * Heilt Projekte, deren Profil beim Anlegen gescheitert ist (Zeitlimit, Absturz), statt dass jede Hermes-Session mit
+ * „Profile does not exist“ endet. Gleichzeitige Aufrufe für dasselbe Profil teilen sich einen einzigen Anlege-Vorgang. */
+export function hermesEnsureProfile(name: string): Promise<{ ok: boolean; message: string }> {
+  if (!name || name === "default" || existsSync(profileDir(name))) return Promise.resolve({ ok: true, message: "" });
+  let job = ensuring.get(name);
+  if (!job) {
+    job = createOrAdoptProfile(name)
+      .then(async (r) => {
+        if (r.ok) await hermesDisableTelemetryPrompt(name).catch(() => undefined);
+        return r;
+      })
+      .finally(() => ensuring.delete(name));
+    ensuring.set(name, job);
+  }
+  return job;
+}
+
 /** Creates the Hermes profile for a project — or, when a stale/orphaned
  * profile with that name is ALREADY present, verifies it is usable and
  * adopts it instead of failing.
@@ -45,7 +70,9 @@ export async function hermesProfileCreate(name: string): Promise<{ ok: boolean; 
  * list` hit alone could be an alias/target miss). Telemetry is pre-answered
  * for adopted profiles too, so the first pane never hangs on the prompt. */
 async function createOrAdoptProfile(name: string): Promise<{ ok: boolean; message: string }> {
-  const create = await runHermes(["profile", "create", name], 30_000)
+  // Großzügiges Zeitlimit: „profile create“ kopiert ~60 mitgelieferte Skills; nach 30 s abgebrochen
+  // blieb das Profil halb oder gar nicht angelegt, und das Projekt startete danach keine Hermes-Session.
+  const create = await runHermes(["profile", "create", name], 180_000)
     .then(() => ({ ok: true as const, message: `Profil ${name} angelegt.` }))
     .catch((err: unknown): { ok: boolean; message: string } => {
       // promisified execFile rejects with the terse "Command failed: <cmd>"
@@ -77,8 +104,7 @@ async function createOrAdoptProfile(name: string): Promise<{ ok: boolean; messag
     .map((l) => l.trim())
     .find((l) => new RegExp(`(^|\\s)${escapeRegExp(name)}(\\s|$)`).test(l));
   if (!row) return create;
-  const profileDir = join(process.env.LOCALAPPDATA ?? join(os.homedir(), "AppData", "Local"), "hermes", "profiles", name);
-  if (!existsSync(profileDir)) return create;
+  if (!existsSync(profileDir(name))) return create;
 
   // Re-point telemetry prefs (a stale half-created profile may not have
   // them set), then adopt.

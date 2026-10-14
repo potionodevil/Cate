@@ -5,11 +5,9 @@
  */
 import React, { useEffect, useState } from "react";
 import { Input } from "@/components/ui/input";
-import { Progress } from "@/components/ui/progress";
 import { Button } from "@/components/ui/button";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { IconRefresh } from "./icons";
-import { NodePipeline, StatusBar } from "./panels/PipelineVisual";
+import { BarChart, BlockMeter, HBars } from "./charts";
 
 type Insights = Awaited<ReturnType<typeof window.harness.usageInsights>>;
 type Limits = Awaited<ReturnType<typeof window.harness.usageLimits>>;
@@ -140,30 +138,38 @@ export function UsageDashboard({ profile }: { profile?: string }) {
   };
   const color = !data.ok && !loading ? stateColor.error : stateColor[warnLevel] || stateColor.ok;
 
+  const avgPerDay = data.ok && data.estimatedCostUsd != null && days > 0 ? data.estimatedCostUsd / days : null;
+  const dayItems = codex.ok ? codex.byDay.map((d) => ({ label: d.day.slice(5), value: d.inputTokens + d.outputTokens })) : [];
+  const stats = [
+    { label: "Tokens", value: loading || !data.ok ? "—" : compactTokens(data.totalTokens), note: data.ok ? `${data.messages.toLocaleString("de-DE")} Nachrichten` : " " },
+    { label: "Kosten", value: loading ? "—" : data.estimatedCostUsd != null ? `$${data.estimatedCostUsd.toFixed(2)}` : "unbekannt", note: avgPerDay != null && days > 1 ? `$${avgPerDay.toFixed(2)} pro Tag im Schnitt` : " " },
+    { label: "Sessions", value: loading || !data.ok ? "—" : String(data.sessions), note: " " },
+    { label: "Modelle", value: loading || !data.ok ? "—" : String(data.models.length), note: data.models[0]?.model ?? " " }
+  ];
+  const periods: [number, string][] = [[1, "Heute"], [7, "7 Tage"], [30, "30 Tage"]];
+  const status = loading ? "Lädt…" : !data.ok ? `Konnte Usage nicht laden${data.error ? `: ${data.error}` : ""}.` : null;
+
   return (
-    <div style={{ padding: "var(--space-4)", overflowY: "auto", height: "100%" }}>
-      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: "var(--space-4)" }}>
-        <h3 className="hh-title" style={{ fontSize: "var(--text-lg)" }}>
-          Usage &amp; Budget{profile ? <span className="hh-muted"> — {profile}</span> : ""}
+    <div className="hh-usage" style={{ overflowY: "auto", height: "100%" }}>
+      <div className="hh-usage-head">
+        <h3 className="hh-usage-title">
+          Nutzung{profile ? <span className="hh-faint"> / {profile}</span> : ""}
         </h3>
-        <div style={{ display: "flex", gap: "var(--space-2)", alignItems: "center" }}>
-          <Select
-            value={String(days)}
-            onValueChange={(v) => {
-              const n = Number(v);
-              setDays(n);
-              fetchInsights(n);
-            }}
-          >
-            <SelectTrigger className="h-8 w-32 text-xs">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="1">Heute</SelectItem>
-              <SelectItem value="7">Letzte 7 Tage</SelectItem>
-              <SelectItem value="30">Letzte 30 Tage</SelectItem>
-            </SelectContent>
-          </Select>
+        <div className="hh-usage-tools">
+          <div className="hh-seg" role="tablist" aria-label="Zeitraum">
+            {periods.map(([n, label]) => (
+              <button
+                key={n}
+                type="button"
+                role="tab"
+                aria-selected={days === n}
+                className={days === n ? "is-on" : undefined}
+                onClick={() => { setDays(n); void fetchInsights(n); void fetchCodex(n); }}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
           <Button size="sm" variant="secondary" disabled={loading || loadingLimits || loadingCodex} onClick={() => { fetchInsights(days); fetchLimits(); fetchCodex(days); }}>
             <IconRefresh size={14} />
             Aktualisieren
@@ -171,244 +177,92 @@ export function UsageDashboard({ profile }: { profile?: string }) {
         </div>
       </div>
 
-      {/* Headline figures first (tinted slab), supporting budget + strategy
-       * below it. `tabular-nums` keeps the numbers from reflowing while they
-       * count up; `variant-numeric` inherits into all children. */}
-      <div className="hh-budget-hero" style={{ fontVariantNumeric: "tabular-nums" }}>
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(3, minmax(0, 1fr))", gap: "var(--space-3)", marginBottom: "var(--space-3)" }}>
-          <div>
-            <span className="hh-stat-label">Sessions</span>
-            <div className="hh-stat-value">{loading ? "—" : data.ok ? data.sessions : "—"}</div>
-          </div>
-          <div>
-            <span className="hh-stat-label">Tokens</span>
-            <div className="hh-stat-value">
-              {loading ? "—" : data.ok ? data.totalTokens.toLocaleString() : "—"}
+      <div className="hh-usage-body">
+        <div className="hh-stat-strip">
+          {stats.map((st) => (
+            <div key={st.label} className="hh-stat-cell">
+              <span className="hh-stat-label">{st.label}</span>
+              <span className="hh-stat-value">{st.value}</span>
+              <span className="hh-stat-note">{st.note}</span>
             </div>
-          </div>
-          <div>
-            <span className="hh-stat-label">Kosten</span>
-            <div className="hh-stat-value" style={{ display: "flex", alignItems: "baseline", gap: 4 }}>
-              {loading ? "—" : data.estimatedCostUsd != null ? (
-                <>
-                  ${data.estimatedCostUsd.toFixed(2)}
-                </>
-              ) : (
-                <span className="hh-stat-unit" style={{ fontSize: "var(--text-sm)" }}>unbekannt</span>
-              )}
-            </div>
-          </div>
-        </div>
-
-        {days === 1 && (
-          <div style={{ fontSize: "var(--text-sm)" }}>
-            <label style={{ display: "flex", alignItems: "center", gap: "var(--space-2)", marginBottom: "var(--space-2)" }}>
-              <span className="hh-muted" style={{ flex: "0 0 auto" }}>Tagesbudget ($)</span>
-              <Input
-                type="number"
-                step="0.5"
-                value={dailyBudgetUsd}
-                onChange={(e) => setDailyBudgetUsd(Number(e.target.value))}
-                className="w-20 h-8 px-2"
-              />
-              <span className="hh-faint" style={{ fontSize: "var(--text-xs)", fontVariantNumeric: "tabular-nums", marginLeft: "auto" }}>
-                {loading ? "" : `${pct.toFixed(0)} % vom Budget`}
-              </span>
-            </label>
-            <Progress
-              value={budgetActive && !loading && data.ok ? pct : 0}
-              className="h-1.5"
-              style={{ ["--hh-progress-color" as string]: color }}
-              indicatorClassName="bg-[var(--hh-progress-color)]"
-            />
-          </div>
-        )}
-
-        <div
-          className="hh-budget-warn"
-          style={(!data.ok && !loading) || (budgetActive && warnLevel !== "ok") ? { color } : { color: "var(--text-muted)", fontWeight: 400 }}
-        >
-          {loading ? (
-            <>
-              <span className="hh-budget-warn-dot" style={{ background: "var(--text-muted)" }} />
-              <span>Lädt…</span>
-            </>
-          ) : !data.ok ? (
-            <>
-              <span className="hh-budget-warn-dot" style={{ background: "var(--danger)" }} />
-              <span>
-                Konnte Usage nicht laden{data.error ? `: ${data.error}` : ""}.
-              </span>
-            </>
-          ) : budgetActive && warnLevel !== "ok" ? (
-            <>
-              <span className="hh-budget-warn-dot" style={{ background: color }} />
-              <span>{warnLevel === "crit" ? "Budget erreicht/überschritten." : "Budget-Schwelle nähert sich — kein Zwang, nur Hinweis."}</span>
-            </>
-          ) : data.ok ? (
-            <>
-              <span className="hh-budget-warn-dot" style={{ background: "var(--success)" }} />
-              <span>
-                {data.unknownSessions > 0
-                  ? `${data.unknownSessions} Session(s) ohne Preisdaten — Kosten eher höher als geschätzt.`
-                  : "Alle Kosten erfasst."}
-              </span>
-            </>
-          ) : null}
-        </div>
-      </div>
-
-      {/* Micro-Pipeline Decor: monospace Pipeline + Statuszeile aus dem
-       * Panel-Visual-System, Werte rein aus bestehendem Dashboard-State. */}
-      <div style={{ marginTop: "var(--space-2)", marginBottom: "var(--space-3)", display: "flex", flexDirection: "column", gap: "var(--space-2)" }}>
-        <NodePipeline nodes={["Hermes", "Shell", "Git"]} accentIdx={0} />
-        <StatusBar
-          items={[
-            { label: "ctx", value: loading || !data.ok ? "—" : compactTokens(data.totalTokens) },
-            { label: "model", value: data.models[0]?.model ?? "-" },
-            { label: "budget", value: loading ? "—" : `${pct.toFixed(0)}%`, color: budgetActive && warnLevel !== "ok" ? color : undefined }
-          ]}
-        />
-      </div>
-
-      {/* Konto-Limits: das 5h-Fenster + Wochenfenster, direkt vom Provider
-       * (Anthropic OAuth) — genau die /usage-Anzeige, als Balken je Window. */}
-      <div className="hh-budget-hero" style={{ marginTop: "var(--space-3)", fontVariantNumeric: "tabular-nums" }}>
-        <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", marginBottom: "var(--space-2)" }}>
-          <span className="hh-stat-label" style={{ fontSize: "var(--text-sm)" }}>Konto-Limits{limits.provider ? ` — ${limits.provider}` : ""}</span>
-          <span className="hh-faint" style={{ fontSize: "var(--text-xs)" }}>
-            {limits.ok ? `${limits.source === "oauth_usage_api" ? "OAuth-Nutzungs-API" : limits.source ?? ""}` : ""}
-          </span>
-        </div>
-        {loadingLimits ? (
-          <div className="hh-muted" style={{ fontSize: "var(--text-sm)" }}>Lädt…</div>
-        ) : !limits.ok ? (
-          <div style={{ fontSize: "var(--text-sm)", color: "var(--danger)", whiteSpace: "pre-wrap" }}>
-            Konnte Limits nicht laden{limits.error ? `: ${limits.error}` : ""}.
-          </div>
-        ) : limits.windows.length === 0 ? (
-          <div className="hh-muted" style={{ fontSize: "var(--text-sm)" }}>
-            Kein Limit-Fenster verfügbar{limits.plan ? ` (Plan: ${limits.plan})` : ""}.
-          </div>
-        ) : (
-          <div style={{ display: "flex", flexDirection: "column", gap: "var(--space-3)" }}>
-            {limits.windows.map((w) => {
-              const lp = Math.min(100, Math.max(0, w.usedPercent));
-              const lc = lp >= 100 ? "var(--danger)" : lp >= 90 ? "var(--status-high)" : lp >= 75 ? "var(--warning)" : "var(--success)";
-              return (
-                <div key={w.label}>
-                  <div style={{ display: "flex", justifyContent: "space-between", fontSize: "var(--text-sm)", marginBottom: 4 }}>
-                    <span style={{ color: "var(--text-primary)" }}>{w.label}</span>
-                    <span className="hh-muted">
-                      {w.usedPercent.toFixed(0)} % · Reset {formatReset(w.resetsAt)}
-                    </span>
-                  </div>
-                  <Progress
-                    value={lp}
-                    className="h-1.5"
-                    style={{ ["--hh-progress-color" as string]: lc }}
-                    indicatorClassName="bg-[var(--hh-progress-color)]"
-                  />
-                </div>
-              );
-            })}
-          </div>
-        )}
-      </div>
-
-      {/* Agent-Quellen: Codex CLI eigenes rollout-Log (offline, ohne API);
-       * OpenCode hat bewusst keine Karte — es stellt keine nutzbaren
-       * Usage-Daten via CLI bereit (kein Kommando, keine Logdatei). */}
-      <div className="hh-budget-hero" style={{ marginTop: "var(--space-3)", fontVariantNumeric: "tabular-nums" }}>
-        <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", marginBottom: "var(--space-2)" }}>
-          <span className="hh-stat-label" style={{ fontSize: "var(--text-sm)" }}>Codex CLI (OpenAI)</span>
-          <span className="hh-faint" style={{ fontSize: "var(--text-xs)" }}>~/.codex/sessions</span>
-        </div>
-        {loadingCodex ? (
-          <div className="hh-muted" style={{ fontSize: "var(--text-sm)" }}>Lädt…</div>
-        ) : !codex.ok ? (
-          <div style={{ fontSize: "var(--text-sm)", color: "var(--danger)", whiteSpace: "pre-wrap" }}>
-            Konnte Codex-Usage nicht laden{codex.error ? `: ${codex.error}` : ""}.
-          </div>
-        ) : codex.sessions === 0 ? (
-          <div className="hh-muted" style={{ fontSize: "var(--text-sm)" }}>
-            Keine Codex-Sessions in den letzten {days} Tag(en).
-          </div>
-        ) : (
-          <>
-            <div style={{ fontSize: "var(--text-sm)", marginBottom: "var(--space-2)" }}>
-              <strong style={{ color: "var(--text-primary)" }}>{codex.sessions}</strong> Sessions ·{" "}
-              <span className="hh-muted">Input:</span>{" "}
-              <strong style={{ color: "var(--text-primary)" }}>{codex.inputTokens.toLocaleString()}</strong>{" "}
-              <span className="hh-muted">(davon gecached: {codex.cachedTokens.toLocaleString()})</span>{" "}
-              · <span className="hh-muted">Output:</span>{" "}
-              <strong style={{ color: "var(--text-primary)" }}>{codex.outputTokens.toLocaleString()}</strong>
-            </div>
-            <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
-              {codex.byDay.map((d) => (
-                <div key={d.day} style={{ display: "flex", justifyContent: "space-between", fontSize: "var(--text-xs)" }}>
-                  <span className="hh-muted" style={{ fontVariantNumeric: "tabular-nums" }}>{d.day}</span>
-                  <span style={{ fontVariantNumeric: "tabular-nums" }}>
-                    {d.sessions} Sess · {(d.inputTokens + d.outputTokens).toLocaleString()} Tokens
-                  </span>
-                </div>
-              ))}
-            </div>
-          </>
-        )}
-        <div className="hh-faint" style={{ fontSize: "var(--text-xs)", marginTop: "var(--space-3)", paddingTop: "var(--space-3)", borderTop: "1px solid var(--border)" }}>
-          OpenCode: keine Usage-Daten verfügbar (kein CLI-Befehl, keine Logdatei).
-        </div>
-      </div>
-
-      <table className="hh-usage-table">
-        <thead>
-          <tr>
-            <th className="hh-section-header" colSpan={2}>
-              Modell
-            </th>
-            <th className="hh-section-header hh-num">Sessions</th>
-            <th className="hh-section-header hh-num">Tokens</th>
-          </tr>
-        </thead>
-        <tbody>
-          {loading && data.models.length === 0 && (
-            <tr>
-              <td colSpan={4} className="hh-usage-empty">
-                Lädt…
-              </td>
-            </tr>
-          )}
-          {!loading && !data.ok && data.models.length === 0 && (
-            <tr>
-              <td colSpan={4} className="hh-usage-empty" style={{ color: "var(--danger)", fontStyle: "normal" }}>
-                Konnte Usage nicht laden.
-              </td>
-            </tr>
-          )}
-          {data.models.map((r) => (
-            <tr
-              key={r.model}
-              // Hard-coded zebra striping would look wrong on any of the 4
-              // themes; instead the table gets its color purely from the row
-              // hover rule in theme.css.
-            >
-              <td style={{ color: "var(--text-primary)", fontWeight: 500 }}>{r.model}</td>
-              <td />
-              <td className="hh-num hh-muted">{r.sessions}</td>
-              <td className="hh-num">{r.tokens.toLocaleString()}</td>
-            </tr>
           ))}
-          {!loading && data.ok && data.models.length === 0 && (
-            <tr>
-              <td colSpan={4} className="hh-usage-empty">
-                Keine Nutzung im gewählten Zeitraum.
-              </td>
-            </tr>
+        </div>
+        {status && <div className="hh-usage-status" style={{ color: !data.ok && !loading ? "var(--danger)" : undefined }}>{status}</div>}
+
+        <section className="hh-usage-section">
+          <div className="hh-usage-section-head">
+            <h2>Tokens pro Tag</h2>
+            <span>Codex CLI · Input + Output</span>
+          </div>
+          {loadingCodex ? (
+            <div className="hh-usage-empty">Lädt…</div>
+          ) : dayItems.length > 1 ? (
+            <BarChart items={dayItems} height={220} />
+          ) : (
+            <div className="hh-usage-empty">{codex.ok ? `Keine Codex-Sessions in den letzten ${days} Tag(en).` : `Konnte Codex-Usage nicht laden${codex.error ? `: ${codex.error}` : ""}.`}</div>
           )}
-        </tbody>
-      </table>
+        </section>
+
+        <div className="hh-usage-cols">
+          <section className="hh-usage-section" style={{ flex: "2 1 420px" }}>
+            <div className="hh-usage-section-head"><h2>Nach Modell</h2><span>Tokens</span></div>
+            {data.ok && data.models.length > 0 ? (
+              <HBars items={data.models.slice(0, 8).map((m) => ({ label: m.model, value: m.tokens }))} />
+            ) : (
+              <div className="hh-usage-empty">{loading ? "Lädt…" : "Keine Nutzung im gewählten Zeitraum."}</div>
+            )}
+          </section>
+          <section className="hh-usage-section" style={{ flex: "1 1 260px" }}>
+            <div className="hh-usage-section-head"><h2>Tagesbudget</h2></div>
+            <div className="hh-budget-figure">
+              <span>{days === 1 && !loading && data.ok ? `$${cost.toFixed(2)}` : "—"}</span>
+              <label>
+                von $
+                <Input type="number" step="0.5" value={dailyBudgetUsd} onChange={(e) => setDailyBudgetUsd(Number(e.target.value))} className="h-7 w-16 px-2" aria-label="Tagesbudget in Dollar" />
+              </label>
+            </div>
+            <div className="hh-budget-bar" role="meter" aria-valuenow={Math.round(pct)} aria-valuemin={0} aria-valuemax={100} aria-label="Tagesbudget">
+              <span style={{ ["--p" as string]: budgetActive && !loading && data.ok ? pct / 100 : 0, background: color }} />
+            </div>
+            <p className="hh-budget-text">
+              {days !== 1
+                ? "Das Tagesbudget gilt nur für „Heute“."
+                : budgetActive && data.ok
+                  ? warnLevel === "crit"
+                    ? "Budget erreicht oder überschritten."
+                    : `Noch $${Math.max(0, dailyBudgetUsd - cost).toFixed(2)} übrig (${pct.toFixed(0)} % verbraucht).${data.unknownSessions > 0 ? ` ${data.unknownSessions} Session(s) ohne Preisdaten, Kosten eher höher.` : ""}`
+                  : " "}
+            </p>
+          </section>
+        </div>
+
+        <section className="hh-usage-section">
+          <div className="hh-usage-section-head">
+            <h2>Konto-Limits{limits.provider ? ` · ${limits.provider}` : ""}</h2>
+            <span>{limits.ok ? (limits.source === "oauth_usage_api" ? "OAuth-Nutzungs-API" : limits.source ?? "") : ""}</span>
+          </div>
+          {loadingLimits ? (
+            <div className="hh-usage-empty">Lädt…</div>
+          ) : !limits.ok ? (
+            <div className="hh-usage-empty" style={{ color: "var(--danger)" }}>Konnte Limits nicht laden{limits.error ? `: ${limits.error}` : ""}.</div>
+          ) : limits.windows.length === 0 ? (
+            <div className="hh-usage-empty">Kein Limit-Fenster verfügbar{limits.plan ? ` (Plan: ${limits.plan})` : ""}.</div>
+          ) : (
+            <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+              {limits.windows.map((w) => {
+                const lp = Math.min(100, Math.max(0, w.usedPercent));
+                const lc = lp >= 100 ? "var(--danger)" : lp >= 90 ? "var(--status-high)" : lp >= 75 ? "var(--warning)" : "var(--success)";
+                return (
+                  <div key={w.label}>
+                    <div className="hh-limit-row"><span>{w.label}</span><span>{w.usedPercent.toFixed(0)} % · Reset {formatReset(w.resetsAt)}</span></div>
+                    <BlockMeter value={lp} color={lc} label={w.label} />
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </section>
+      </div>
     </div>
   );
 }
-

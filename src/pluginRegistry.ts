@@ -57,6 +57,10 @@ export interface PluginManifest {
   version: string;
   description?: string;
   slots?: PluginSlot[];
+  /** Katalogkategorie (siehe pluginCatalog.ts). */
+  category?: string;
+  /** Icon-Schluessel fuer PluginGlyph. */
+  icon?: string;
 }
 
 export interface PluginDefinition extends PluginManifest {

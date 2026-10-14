@@ -4,23 +4,27 @@
  * Nutzung ohne ausdrückliche schriftliche Erlaubnis von R.S. ist untersagt.
  */
 import * as React from "react";
-import { Blocks, FileText, ClipboardPaste } from "lucide-react";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Switch } from "@/components/ui/switch";
 import { Button } from "@/components/ui/button";
+import { Separator } from "@/components/ui/separator";
+import { ScrollArea } from "@/components/ui/scroll-area";
+import { IconPlugin, PluginGlyph } from "@/icons";
+import { resolveIcon } from "@/pluginCatalog";
 import { pluginRegistry, type PluginAction } from "./pluginRegistry";
-// Side-effect import: registers the built-in ContextPicker plugin's actions
-// (file/clipboard-as-context) so they appear below without relying on some
-// other component having imported it first.
+// Side-effect import: registriert die Aktionen des ContextPicker-Plugins.
 import "./contextPickerPlugin";
 
-/** Header popover (top-right) for plugins: shows every registered plugin
- * with its enable/disable state, plus one-click buttons for that plugin's
- * project-scoped actions (e.g. the ContextPicker plugin's "Datei/
- * Zwischenablage als Kontext anfügen"). Moved out of Settings since plugin
- * status and quick actions are something you reach for constantly while
- * working, not a one-time configuration step. */
-export function HeaderPluginsPopover({ activeProjectId }: { activeProjectId: string | null }) {
+export interface HeaderPluginsPopoverProps {
+  activeProjectId: string | null;
+  /** Oeffnet den Plugin-Manager. Ohne diese Prop entfaellt der Verwalten-Eintrag. */
+  onManage?: () => void;
+}
+
+/** Kopfzeilen-Popover: kompakte Liste der Plugins mit Schalter, darunter die
+ * Projekt-Aktionen aktiver Plugins und der Einstieg in den Plugin-Manager.
+ * Oeffnet nur per Linksklick (Radix-Trigger, kein onContextMenu). */
+export function HeaderPluginsPopover({ activeProjectId, onManage }: HeaderPluginsPopoverProps) {
   const [open, setOpen] = React.useState(false);
   const [, setVersion] = React.useState(0);
   const [busyActionId, setBusyActionId] = React.useState<string | null>(null);
@@ -29,6 +33,7 @@ export function HeaderPluginsPopover({ activeProjectId }: { activeProjectId: str
   React.useEffect(() => pluginRegistry.subscribe(() => setVersion((v) => v + 1)), []);
 
   const plugins = pluginRegistry.getRegisteredPlugins();
+  const activeCount = plugins.filter((p) => p.enabled).length;
   const projectActions = pluginRegistry.getSnapshot().actions.filter((a) => a.contextKinds?.includes("project"));
 
   async function runAction(action: PluginAction) {
@@ -51,64 +56,85 @@ export function HeaderPluginsPopover({ activeProjectId }: { activeProjectId: str
     <Popover open={open} onOpenChange={setOpen}>
       <PopoverTrigger asChild>
         <button type="button" className="hh-window-control" title="Plugins" aria-label="Plugins">
-          <Blocks size={15} aria-hidden="true" />
+          <IconPlugin size={15} />
         </button>
       </PopoverTrigger>
-      <PopoverContent align="end" sideOffset={10} className="hh-header-popover w-[280px] p-3">
-        <div className="hh-section-header" style={{ marginBottom: "var(--space-2)" }}>
-          Plugins
+      <PopoverContent align="end" sideOffset={10} className="hh-header-popover w-[300px] p-0">
+        <div className="flex items-center justify-between px-3 pb-2 pt-3">
+          <span className="text-xs font-medium">Plugins</span>
+          <span className="font-mono text-[10px] text-muted-foreground">
+            {activeCount} von {plugins.length} aktiv
+          </span>
         </div>
-        <div className="flex flex-col gap-1.5">
-          {plugins.length === 0 && <p className="hh-faint m-0 text-xs">Keine Plugins registriert.</p>}
-          {plugins.map((plugin) => (
-            <div key={plugin.id} className="flex min-w-0 items-center gap-2">
-              <span
-                aria-hidden
-                className="h-[6px] w-[6px] shrink-0 rounded-full"
-                style={{ background: plugin.enabled ? "var(--success)" : "var(--border)" }}
-              />
-              <div className="min-w-0 flex-1">
-                <div className="truncate text-xs font-medium">{plugin.name}</div>
-                <div className="hh-faint truncate text-[10px]">v{plugin.version}</div>
+        <ScrollArea className="max-h-[240px]">
+          <div className="flex flex-col px-1.5 pb-1.5">
+            {plugins.length === 0 && <p className="m-0 px-1.5 py-2 text-xs text-muted-foreground">Keine Plugins registriert.</p>}
+            {plugins.map((plugin) => (
+              <div key={plugin.id} className="flex min-w-0 items-center gap-2 rounded-md px-1.5 py-1.5 hover:bg-muted/50">
+                <span className="text-muted-foreground">
+                  <PluginGlyph name={resolveIcon(plugin)} size={14} />
+                </span>
+                <div className="min-w-0 flex-1">
+                  <div className="truncate text-xs font-medium">{plugin.name}</div>
+                  <div className="truncate font-mono text-[10px] text-muted-foreground">v{plugin.version}</div>
+                </div>
+                <span
+                  aria-hidden
+                  className={"h-1.5 w-1.5 shrink-0 rounded-full " + (plugin.enabled ? "bg-amber-400" : "bg-muted-foreground/40")}
+                />
+                <Switch
+                  checked={plugin.enabled}
+                  onCheckedChange={(enabled) => pluginRegistry.setEnabled(plugin.id, enabled)}
+                  aria-label={`${plugin.name} aktivieren`}
+                />
               </div>
-              <Switch
-                checked={plugin.enabled}
-                onCheckedChange={(enabled) => pluginRegistry.setEnabled(plugin.id, enabled)}
-                aria-label={`${plugin.name} aktivieren`}
-              />
-            </div>
-          ))}
-        </div>
+            ))}
+          </div>
+        </ScrollArea>
 
         {projectActions.length > 0 && (
           <>
-            <div className="hh-section-header" style={{ margin: "var(--space-3) 0 var(--space-2)" }}>
-              Kontext-Aktionen
-            </div>
-            <div className="flex flex-col gap-1">
+            <Separator />
+            <div className="flex flex-col gap-1 p-2">
+              <span className="px-1 text-[10px] uppercase tracking-wider text-muted-foreground">Aktionen</span>
               {projectActions.map((action) => {
-                const Icon = action.icon ?? (action.id.includes("clipboard") ? ClipboardPaste : FileText);
+                const Icon = action.icon;
                 return (
                   <Button
                     key={action.id}
                     size="sm"
-                    variant="outline"
-                    className="justify-start gap-2"
+                    variant="ghost"
+                    className="h-7 justify-start gap-2 px-2 text-xs"
                     disabled={!activeProjectId || busyActionId === action.id}
                     onClick={() => runAction(action)}
                   >
-                    <Icon size={13} />
+                    {Icon ? <Icon size={13} /> : <IconPlugin size={13} />}
                     {action.label}
                   </Button>
                 );
               })}
+              {!activeProjectId && <p className="m-0 px-1 text-[11px] text-muted-foreground">Erst ein Projekt wählen.</p>}
+              {actionError && <p className="m-0 px-1 text-[11px] text-destructive">{actionError}</p>}
             </div>
-            {!activeProjectId && <p className="hh-faint m-0 mt-1 text-[11px]">Erst ein Projekt wählen.</p>}
-            {actionError && (
-              <p className="m-0 mt-1 text-[11px]" style={{ color: "var(--danger)" }}>
-                {actionError}
-              </p>
-            )}
+          </>
+        )}
+
+        {onManage && (
+          <>
+            <Separator />
+            <div className="p-2">
+              <Button
+                size="sm"
+                variant="outline"
+                className="h-8 w-full justify-center text-xs"
+                onClick={() => {
+                  setOpen(false);
+                  onManage();
+                }}
+              >
+                Plugins verwalten
+              </Button>
+            </div>
           </>
         )}
       </PopoverContent>

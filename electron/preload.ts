@@ -3,8 +3,12 @@
  * Dieser Code ist geistiges Eigentum von R.S. Vervielfältigung, Weitergabe oder
  * Nutzung ohne ausdrückliche schriftliche Erlaubnis von R.S. ist untersagt.
  */
-import { contextBridge, ipcRenderer } from "electron";
+import { contextBridge, ipcRenderer, webUtils } from "electron";
+import type { AttachResult } from "./attachments";
+import type { SubagentInfo, SubagentLine } from "./subagents";
 import type { ContextPayload, ContextResult } from "./contextCore";
+import type { HostPluginInfo } from "./pluginHost";
+import type { ProviderSkillsResult } from "./providerSkills";
 
 export type PaneStatus = "starting" | "running" | "exited" | "stopped";
 
@@ -53,9 +57,40 @@ export interface PetSettings {
   speed: number;
   area: "floor" | "screen" | "sit";
   anchor: "left" | "center" | "right";
+  /** The one animal that visits the cat. bunny is a main pet option now, not a companion. */
+  companion: "none" | "mouse" | "bird" | "butterfly";
+  companionArea: "floor" | "top" | "screen";
   followOnNotify: boolean;
   idleSeconds: number;
   bubbleSeconds: number;
+  /** Electron display id the cat lives on; null = main display. */
+  displayId: number | null;
+  opacity: number;
+  alwaysOnTop: boolean;
+  clickThrough: boolean;
+  followCursor: boolean;
+  groomEvery: number;
+  napChance: number;
+}
+
+/** A connected display as the cat settings see it (mirrors electron/petDisplays.ts). */
+export interface PetDisplayInfo {
+  id: number;
+  index: number;
+  name: string;
+  width: number;
+  height: number;
+  scaleFactor: number;
+  primary: boolean;
+  bounds: { x: number; y: number; width: number; height: number };
+  workArea: { x: number; y: number; width: number; height: number };
+}
+
+export interface PetDisplayList {
+  displays: PetDisplayInfo[];
+  selectedId: number | null;
+  activeId: number;
+  fallback: boolean;
 }
 
 export interface HarnessApi {
@@ -84,6 +119,9 @@ export interface HarnessApi {
   attachSessionPane(paneId: string): Promise<{ backlog: string } | null>;
   exportSessionPane(paneId: string): Promise<{ ok: boolean; path?: string; message?: string }>;
   writeSessionPane(paneId: string, data: string): void;
+  /** Renderer-seitige Warte-Erkennung: Pane meldet „wartet auf Eingabe" an den
+   * Main-Prozess (Katzen-Reaktion). Kein DB-Status. */
+  setPaneWaitState(sessionId: string, waiting: boolean): void;
   resizeSessionPane(paneId: string, cols: number, rows: number): void;
   onSessionPaneData(paneId: string, cb: (data: string) => void): () => void;
   onSessionPaneExit(paneId: string, cb: (code: number) => void): () => void;
@@ -157,6 +195,7 @@ export interface HarnessApi {
   }>;
   listAgentPresets(): Promise<unknown[]>;
   detectInstalledAgents(): Promise<{ id: string; label: string; installed: boolean }[]>;
+  providerSkills(presetId: string, opts?: { profile?: string; projectFolder?: string }): Promise<ProviderSkillsResult>;
   getUserName(): Promise<string | null>;
   setUserName(name: string): Promise<{ ok: boolean }>;
   getSidebarPosition(): Promise<"left" | "right">;
@@ -166,9 +205,23 @@ export interface HarnessApi {
   getMotionEnabled(): Promise<boolean>;
   setMotionEnabled(enabled: boolean): Promise<{ ok: boolean }>;
   minimizeWindow(): Promise<void>;
+  toggleMaximizeWindow(): Promise<boolean>;
+  attachFromClipboard(): Promise<AttachResult>;
+  attachPickFiles(): Promise<AttachResult>;
+  attachSaveBytes(name: string, data: Uint8Array): Promise<AttachResult>;
+  pathForFile(file: File): string;
+  listSubagents(): Promise<SubagentInfo[]>;
+  readSubagent(id: string): Promise<SubagentLine[]>;
+  onWindowMaximized(cb: (maximized: boolean) => void): () => void;
   closeWindow(): Promise<void>;
   listPluginManifests(): Promise<{ id: string; name: string; version: string; description?: string; slots?: ("action" | "sidebar" | "context")[] }[]>;
   onPluginShortcut(cb: () => void): () => void;
+  pluginsList(): Promise<HostPluginInfo[]>;
+  pluginsSetEnabled(id: string, enabled: boolean): Promise<{ ok: boolean; message?: string }>;
+  pluginsSetConfig(id: string, key: string, value: unknown): Promise<{ ok: boolean; message?: string }>;
+  pluginsGetConfig(): Promise<Record<string, Record<string, unknown>>>;
+  pluginsGetAppDataDir(): Promise<string>;
+  pluginsInvoke(id: string, op: string, args?: unknown, projectRoot?: string): Promise<any>;
   getAgentDefaults(): Promise<{ defaultPresetId: string; defaultModel: string | null }>;
   listLocalModels(endpoint?: string): Promise<{ ok: boolean; models: string[]; message?: string }>;
   getAgentConfig(): Promise<{
@@ -190,6 +243,8 @@ export interface HarnessApi {
   setPetSettings(patch: Partial<PetSettings>): Promise<PetSettings>;
   resetPetSettings(): Promise<PetSettings>;
   testPet(): Promise<void>;
+  listPetDisplays(): Promise<PetDisplayList>;
+  onPetDisplaysChanged(cb: (list: PetDisplayList) => void): () => void;
   /** The desktop cat asked to show a running session (bubble click / double-click). */
   onPetOpenSession(cb: (info: { sessionId: string; projectId: string }) => void): () => void;
   pickFolder(): Promise<string | null>;
@@ -225,6 +280,7 @@ const api: HarnessApi = {
     ipcRenderer.invoke("session:splitPane", { sessionId, paneId, direction, presetId }),
   reattachSession: (sessionId, projectId) => ipcRenderer.invoke("session:reattach", { sessionId, projectId }),
   writeSessionPane: (paneId, data) => ipcRenderer.send("session:paneInput", { paneId, data }),
+  setPaneWaitState: (sessionId, waiting) => ipcRenderer.send("session:waitState", { sessionId, waiting }),
   resizeSessionPane: (paneId, cols, rows) => ipcRenderer.send("session:paneResize", { paneId, cols, rows }),
   onSessionPaneData: (paneId, cb) => {
     const channel = `pty:data:${paneId}`;
@@ -286,6 +342,7 @@ const api: HarnessApi = {
   codexUsage: (days) => ipcRenderer.invoke("usage:codex", { days }),
   listAgentPresets: () => ipcRenderer.invoke("agents:list"),
   detectInstalledAgents: () => ipcRenderer.invoke("agents:detectInstalled"),
+  providerSkills: (presetId, opts) => ipcRenderer.invoke("providers:skills", { presetId, ...(opts ?? {}) }),
   getUserName: () => ipcRenderer.invoke("settings:getUserName"),
   setUserName: (name) => ipcRenderer.invoke("settings:setUserName", { name }),
   getSidebarPosition: () => ipcRenderer.invoke("settings:getSidebarPosition"),
@@ -295,8 +352,26 @@ const api: HarnessApi = {
   getMotionEnabled: () => ipcRenderer.invoke("settings:getMotionEnabled"),
   setMotionEnabled: (enabled) => ipcRenderer.invoke("settings:setMotionEnabled", { enabled }),
   minimizeWindow: () => ipcRenderer.invoke("window:minimize"),
+  toggleMaximizeWindow: () => ipcRenderer.invoke("window:toggleMaximize"),
+  attachFromClipboard: () => ipcRenderer.invoke("attach:clipboard"),
+  attachPickFiles: () => ipcRenderer.invoke("attach:pick"),
+  attachSaveBytes: (name, data) => ipcRenderer.invoke("attach:saveBytes", { name, data }),
+  pathForFile: (file) => webUtils.getPathForFile(file),
+  listSubagents: () => ipcRenderer.invoke("subagents:list"),
+  readSubagent: (id) => ipcRenderer.invoke("subagents:read", { id }),
+  onWindowMaximized: (cb) => {
+    const listener = (_e: Electron.IpcRendererEvent, maximized: boolean) => cb(maximized);
+    ipcRenderer.on("window:maximized", listener);
+    return () => ipcRenderer.removeListener("window:maximized", listener);
+  },
   closeWindow: () => ipcRenderer.invoke("window:close"),
-  listPluginManifests: () => ipcRenderer.invoke("plugins:list"),
+  listPluginManifests: () => ipcRenderer.invoke("plugins:manifests"),
+  pluginsList: () => ipcRenderer.invoke("plugins:list"),
+  pluginsSetEnabled: (id, enabled) => ipcRenderer.invoke("plugins:setEnabled", { id, enabled }),
+  pluginsSetConfig: (id, key, value) => ipcRenderer.invoke("plugins:setConfig", { id, key, value }),
+  pluginsGetConfig: () => ipcRenderer.invoke("plugins:getConfig"),
+  pluginsGetAppDataDir: () => ipcRenderer.invoke("plugins:getAppDataDir"),
+  pluginsInvoke: (id, op, args, projectRoot) => ipcRenderer.invoke("plugins:invoke", { id, op, args, projectRoot }),
   onPluginShortcut: (cb: () => void) => {
     const listener = () => cb();
     ipcRenderer.on("plugins:shortcut", listener);
@@ -319,6 +394,12 @@ const api: HarnessApi = {
   setPetSettings: (patch) => ipcRenderer.invoke("pet:setSettings", patch),
   resetPetSettings: () => ipcRenderer.invoke("pet:reset"),
   testPet: () => ipcRenderer.invoke("pet:test"),
+  listPetDisplays: () => ipcRenderer.invoke("pet:listDisplays"),
+  onPetDisplaysChanged: (cb) => {
+    const listener = (_e: unknown, list: PetDisplayList) => cb(list);
+    ipcRenderer.on("pet:displays-changed", listener);
+    return () => ipcRenderer.removeListener("pet:displays-changed", listener);
+  },
   onPetOpenSession: (cb) => {
     const listener = (_e: Electron.IpcRendererEvent, info: { sessionId: string; projectId: string }) => cb(info);
     ipcRenderer.on("pet:open-session", listener);

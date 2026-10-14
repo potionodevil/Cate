@@ -6,14 +6,14 @@
 import React from "react";
 import { PanelGroup, Panel, PanelResizeHandle } from "react-resizable-panels";
 import { TerminalPane } from "./TerminalPane";
-import { IconClose } from "./icons";
+import { IconClose, IconChevronDown } from "./icons";
 import { Plus } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 // @ts-expect-error - plain untyped .mjs helper (real ESM so Vite dev + build + node:test all resolve it identically)
 import { splitPaneLayout, removePaneLayout, collectPaneLeaves, gridArrangeLayout } from "./layoutLogic.mjs";
 import type { PaneLayoutNode, WorkspaceNode, SessionCallbacks } from "./types";
-import { ApprovalControls, ExecutionGraph } from "./panels/PipelineVisual";
+import { ApprovalControls } from "./panels/PipelineVisual";
 
 export function LayoutRenderer({ node, callbacks }: { node: WorkspaceNode; callbacks: SessionCallbacks }) {
   if (node.type === "session") {
@@ -71,39 +71,36 @@ function SessionFrame({
   return (
     <div style={{ display: "flex", flexDirection: "column", height: "100%", minWidth: 0 }}>
       <div className="hh-session-header">
-        <Badge variant="outline" className="text-[9px] font-normal h-4 px-1">Session</Badge>
+        <Badge variant="outline" className="h-4 rounded-full border-[var(--border)] px-1.5 text-[9px] font-medium uppercase tracking-wider text-[var(--text-muted)]">Session</Badge>
         <span className="hh-session-name">{session.name}</span>
-        <ExecutionGraph
-          className="hh-session-graph"
-          steps={[
-            { label: "Kontext", detail: "bereit", state: "done" },
-            { label: "Agent", detail: "aktiv", state: "active" },
-            { label: "Ausgabe", detail: "wartet", state: "queued" }
-          ]}
-        />
+        <span className="ml-auto" />
         <ApprovalControls />
         <Button
           variant="ghost"
           size="icon"
-          className="hh-session-add h-6 w-6"
-          title="Neue Shell hinzufügen (Rechtsklick: anderen Agent wählen)"
+          className="hh-session-add h-[24px] w-[24px] !ml-0 text-[var(--text-muted)] hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)]"
+          title="Neue Shell hinzufügen"
           aria-label="Neue Shell hinzufügen"
           onClick={onAddPane}
-          onContextMenu={
-            onAddPanePicker
-              ? (e) => {
-                  e.preventDefault();
-                  onAddPanePicker();
-                }
-              : undefined
-          }
         >
           <Plus size={13} />
         </Button>
+        {onAddPanePicker && (
+          <Button
+            variant="ghost"
+            size="icon"
+            className="h-[24px] w-[24px] !ml-0 text-[var(--text-muted)] hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)]"
+            title="Anderen Agent wählen"
+            aria-label="Anderen Agent wählen"
+            onClick={onAddPanePicker}
+          >
+            <IconChevronDown size={12} />
+          </Button>
+        )}
         <Button
           variant="ghost"
           size="icon"
-          className="ml-auto h-6 w-6"
+          className="h-[24px] w-[24px] text-[var(--text-muted)] hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)]"
           title="Session schließen"
           aria-label="Session schließen"
           onClick={onClose}

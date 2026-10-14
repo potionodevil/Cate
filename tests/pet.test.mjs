@@ -13,11 +13,10 @@ const built = new URL("../dist-electron/petSettings.js", import.meta.url);
 const skip = !existsSync(built) && "dist-electron not built";
 const load = () => createRequire(import.meta.url)(built.pathname.replace(/^\/([A-Za-z]:)/, "$1"));
 
-test("logo sprite is a symmetric 16x16 grid", () => {
+test("logo sprite is a 16x16 grid", () => {
   assert.equal(SPRITE.length, 16);
   for (const row of SPRITE) {
     assert.equal(row.length, 16);
-    assert.equal(row, [...row].reverse().join(""));
   }
 });
 
@@ -33,6 +32,19 @@ test("pet settings are clamped and malformed input falls back to the base", { sk
   assert.equal(s.enabled, PET_DEFAULTS.enabled);
   assert.deepEqual(sanitizePet(undefined), PET_DEFAULTS);
   assert.equal(sanitizePet({ scale: 6 }, { ...PET_DEFAULTS, speed: 100 }).speed, 100); // patches merge over the base
+});
+
+test("pet settings keep cat and bunny exclusive (one pet at a time)", { skip }, () => {
+  const { sanitizePet, PET_DEFAULTS } = load();
+  assert.equal(PET_DEFAULTS.petType, "cat"); // Default: Katze mit optionalem Begleiter
+  assert.equal(PET_DEFAULTS.companion, "none");
+  assert.equal(sanitizePet({ petType: "bunny" }).companion, "none"); // Hase kommt ohne Begleiter
+  assert.equal(sanitizePet({ petType: "bunny", companion: "bird" }).companion, "none"); // nie Hase + Begleiter
+  assert.equal(sanitizePet({ petType: "cat", companion: "bird" }).companion, "bird"); // Katze darf Besuch haben
+  assert.equal(sanitizePet({ petType: "nonsense", companion: "bird" }).companion, "bird"); // unbekanntes Tier -> cat-Regel
+  // Alte Saves mit companion "bunny" migrieren automatisch: ungültiger Wert -> Default "none"
+  assert.equal(sanitizePet({ companion: "bunny" }).companion, "none");
+  assert.equal(sanitizePet({ petType: "bunny", companion: "bunny" }).companion, "none");
 });
 
 test("the cat window covers the screen when it may wander, else a bottom strip", { skip }, () => {

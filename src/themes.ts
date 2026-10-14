@@ -17,10 +17,10 @@ export interface ThemeOption {
 }
 
 export const THEME_OPTIONS: ThemeOption[] = [
-  { id: "nous", label: "Nous", swatch: "linear-gradient(135deg, #0d1117 55%, #4a84fe 55%)" },
-  { id: "obsidian", label: "Obsidian", swatch: "linear-gradient(135deg, #15151a 55%, #e0a458 55%)" },
-  { id: "slate", label: "Slate", swatch: "linear-gradient(135deg, #13161c 55%, #49b8ae 55%)" },
-  { id: "daylight", label: "Daylight", swatch: "linear-gradient(135deg, #f6f4ef 55%, #b5651d 55%)" },
-  { id: "aurora", label: "Aurora", swatch: "linear-gradient(135deg, #101b24 55%, #57c7b5 55%)" },
-  { id: "copper", label: "Copper", swatch: "linear-gradient(135deg, #211a19 55%, #d98262 55%)" }
+  { id: "nous", label: "Anthrazit", swatch: "linear-gradient(135deg, #0b0b0f 55%, #f2985c 55%)" },
+  { id: "obsidian", label: "Mitternacht", swatch: "linear-gradient(135deg, #090d19 55%, #72a8ff 55%)" },
+  { id: "slate", label: "Moos", swatch: "linear-gradient(135deg, #0a1210 55%, #4fd6b0 55%)" },
+  { id: "daylight", label: "Daylight", swatch: "linear-gradient(135deg, #f5f0e6 55%, #c2571a 55%)" },
+  { id: "aurora", label: "Neon", swatch: "linear-gradient(135deg, #0f0b1a 55%, #ff6fb1 55%)" },
+  { id: "copper", label: "Kupfer", swatch: "linear-gradient(135deg, #170f0d 55%, #ee8a5e 55%)" }
 ];

@@ -15,6 +15,7 @@ import {
   DropdownMenuTrigger
 } from "@/components/ui/dropdown-menu";
 import { Button } from "@/components/ui/button";
+import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Input } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
 
@@ -190,14 +191,12 @@ export function SessionsView({
       <div className="flex items-center justify-between mb-3">
         <div className="flex items-center gap-3">
           <h3 className="hh-title text-lg">Sessions</h3>
-          <div className="hh-segmented">
-            <button className={viewFilter === "active" ? "active" : ""} onClick={() => setViewFilter("active")}>
-              Aktiv
-            </button>
-            <button className={viewFilter === "archived" ? "active" : ""} onClick={() => setViewFilter("archived")}>
-              Archiv
-            </button>
-          </div>
+          <Tabs value={viewFilter} onValueChange={(v) => setViewFilter(v as typeof viewFilter)} aria-label="Sessions filtern">
+            <TabsList className="h-[28px] gap-0.5 rounded-lg border border-[var(--border)] bg-[var(--bg-primary)] p-0.5">
+              <TabsTrigger value="active" className="h-full min-w-0 rounded-md px-2.5 text-[12px] font-medium text-[var(--text-secondary)] transition-colors duration-fast hover:text-[var(--text-primary)] data-[state=active]:bg-[var(--bg-active)] data-[state=active]:text-[var(--text-primary)] data-[state=active]:shadow-none">Aktiv</TabsTrigger>
+              <TabsTrigger value="archived" className="h-full min-w-0 rounded-md px-2.5 text-[12px] font-medium text-[var(--text-secondary)] transition-colors duration-fast hover:text-[var(--text-primary)] data-[state=active]:bg-[var(--bg-active)] data-[state=active]:text-[var(--text-primary)] data-[state=active]:shadow-none">Archiv</TabsTrigger>
+            </TabsList>
+          </Tabs>
         </div>
         <span className="hh-faint text-xs">Läuft im Hintergrund weiter, auch wenn kein Pane dafür offen ist.</span>
       </div>

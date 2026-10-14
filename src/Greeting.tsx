@@ -6,6 +6,7 @@
 import React from "react";
 import { Button } from "@/components/ui/button";
 import { CatSprite } from "./CatSprite";
+import { PixelCity } from "./PixelScene";
 
 /** Unboxed terminal-brand greeting, mirroring the real Hermes intro recipe
  * (bootstrap-installer/routes/welcome.tsx + desktop chat/intro.tsx):
@@ -50,16 +51,17 @@ export function Greeting({ name }: { name: string | null }) {
           opacity: 0.7
         }}
       />
-      <CatSprite scale={6} />
+      <PixelCity className="hh-city-greet" />
+      <CatSprite scale={7} />
       <div
         style={{
           fontFamily: "var(--font-brand)",
           fontWeight: 700,
           textTransform: "uppercase",
-          fontSize: "clamp(2.25rem, 6vw, 5.5rem)",
+          fontSize: "clamp(2.5rem, 6vw, 4.5rem)",
           lineHeight: 0.9,
-          letterSpacing: "0.2em",
-          marginRight: "-0.2em",
+          letterSpacing: "0.3em",
+          marginRight: "-0.3em",
           color: "var(--text-primary)",
           textShadow: "0 0 24px color-mix(in srgb, var(--accent) 45%, transparent)"
         }}
@@ -76,15 +78,20 @@ export function Greeting({ name }: { name: string | null }) {
           letterSpacing: "0.2em"
         }}
       >
-        cate // {new Date().toLocaleDateString("de-DE", { day: "2-digit", month: "short" })}
+        {new Date().toLocaleDateString("de-DE", { day: "2-digit", month: "short", year: "numeric" })} · &gt;<span className="hh-caret">_</span>
       </div>
-      <h1 className="hh-title hh-greeting-lines" style={{ margin: 0, fontSize: "var(--text-xl)", letterSpacing: "-0.01em", fontWeight: 600 }}>
+      <h1 className="hh-title hh-greeting-lines" style={{ margin: 0, fontSize: 32, lineHeight: 1.15, letterSpacing: "-0.01em", fontWeight: 600 }}>
         <span>{daypart},</span> <span>{firstName}.</span>
       </h1>
-      <p className="hh-muted hh-greeting-lines" style={{ margin: 0, maxWidth: 420, fontSize: "var(--text-sm)", lineHeight: 1.5 }}>
+      <p className="hh-muted hh-greeting-lines" style={{ margin: 0, maxWidth: 420, fontSize: 15, lineHeight: 1.55 }}>
         <span>Wähle links ein Projekt —</span><br /><span>oder starte eine neue Mission.</span>
       </p>
-      <Button onClick={() => document.querySelector<HTMLButtonElement>("[data-new-project]")?.click()}>Neues Projekt anlegen</Button>
+      <Button size="lg" onClick={() => document.querySelector<HTMLButtonElement>("[data-new-project]")?.click()}>Neues Projekt anlegen</Button>
+      <div className="hh-greet-hints">
+        <span><b>Strg K</b> Befehle</span>
+        <span><b>Strg \</b> Sidebar</span>
+        <span><b>Strg Umschalt G</b> Git-Diff</span>
+      </div>
     </div>
   );
 }

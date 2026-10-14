@@ -15,6 +15,7 @@ import {
 } from "@/components/ui/command";
 import { FolderOpen, Plus, PanelLeftOpen, Moon, Sun, Monitor, Layers, History } from "lucide-react";
 import type { Project, SessionRecord } from "./types";
+import { THEME_OPTIONS } from "./themes";
 
 interface CommandPaletteProps {
   open: boolean;
@@ -24,15 +25,6 @@ interface CommandPaletteProps {
   onOpenSession: (s: SessionRecord) => void;
   activeProjectId?: string | null;
 }
-
-type Theme = "nous" | "obsidian" | "slate" | "daylight";
-
-const THEMES: { id: Theme; label: string }[] = [
-  { id: "nous", label: "Nous" },
-  { id: "obsidian", label: "Obsidian" },
-  { id: "slate", label: "Slate" },
-  { id: "daylight", label: "Daylight" }
-];
 
 export function CommandPalette({ open, onClose, onOpenProject, onOpenSessionsView, onOpenSession, activeProjectId }: CommandPaletteProps) {
   const [projects, setProjects] = useState<Project[]>([]);
@@ -99,7 +91,7 @@ export function CommandPalette({ open, onClose, onOpenProject, onOpenSessionsVie
         <CommandSeparator />
 
         <CommandGroup heading="Aussehen">
-          {THEMES.map((t) => (
+          {THEME_OPTIONS.map((t) => (
             <CommandItem key={t.id} onSelect={() => run(() => { window.harness.setTheme(t.id); })}>
               <Moon />
               <span>Theme: {t.label}</span>
@@ -127,6 +119,11 @@ export function CommandPalette({ open, onClose, onOpenProject, onOpenSessionsVie
           </>
         )}
       </CommandList>
+      <div className="hh-palette-foot" aria-hidden>
+        <span>↑↓ wählen</span>
+        <span>↵ öffnen</span>
+        <span>Esc schließen</span>
+      </div>
     </CommandDialog>
   );
 }

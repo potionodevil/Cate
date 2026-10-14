@@ -9,6 +9,7 @@
  * hard Tailwind palette colors, no drop shadows — 1px borders only. */
 
 import React from 'react';
+import { Button } from '@/components/ui/button';
 
 /* ---------- (a) DotGridBackdrop ---------- */
 
@@ -234,11 +235,14 @@ export function ExecutionGraph({ steps, className = '' }: { steps: ExecutionStep
   );
 }
 
+/** Renders only when a handler is wired: without one the buttons would be dead
+ * controls (a filled amber "Freigeben" that does nothing). */
 export function ApprovalControls({ onApprove, onReject }: { onApprove?: () => void; onReject?: () => void }) {
+  if (!onApprove && !onReject) return null;
   return (
     <div className="hh-approval-controls" aria-label="Freigabe">
-      <button type="button" className="hh-btn hh-btn-sm hh-btn-primary" onClick={onApprove}>Freigeben</button>
-      <button type="button" className="hh-btn hh-btn-sm hh-btn-ghost" onClick={onReject}>Ablehnen</button>
+      <Button type="button" size="sm" className="h-[24px] px-2 text-[12px]" onClick={onApprove}>Freigeben</Button>
+      <Button type="button" size="sm" variant="ghost" className="h-[24px] px-2 text-[12px]" onClick={onReject}>Ablehnen</Button>
     </div>
   );
 }

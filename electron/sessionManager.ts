@@ -4,7 +4,7 @@
  * Nutzung ohne ausdrückliche schriftliche Erlaubnis von R.S. ist untersagt.
  */
 import { randomUUID } from "crypto";
-import { existsSync, renameSync, unlinkSync, writeFileSync } from "fs";
+import { existsSync, readFileSync, renameSync, unlinkSync, writeFileSync } from "fs";
 import { join } from "path";
 import { app, BrowserWindow, type WebContents } from "electron";
 import { DEFAULT_SHELL, PtyManager, type PaneSpawnOptions } from "./ptyManager";
@@ -27,7 +27,14 @@ import {
   type SessionRecord,
   type SessionStatus
 } from "./sessionStore";
-import { compactTerminalLog, writeAirFile, readAirFile, deriveSessionTitle, deriveTitleFromPromptEcho } from "./airFormat";
+import {
+  compactTerminalLog,
+  mergeRestoredContext,
+  writeAirFile,
+  readAirFile,
+  deriveSessionTitle,
+  deriveTitleFromPromptEcho
+} from "./airFormat";
 import {
   writeSessionSnapshot,
   deleteSessionSnapshot,
@@ -92,6 +99,12 @@ export function contextTextPath(sessionId: string): string {
   return join(contextDir(), `${sessionId}.txt`);
 }
 
+/** History from BEFORE the current process (written at reattach). Persisted so
+ * it also survives a second app restart that re-adopts the live process. */
+function previousContextPath(sessionId: string): string {
+  return join(contextDir(), `${sessionId}.prev.txt`);
+}
+
 function writeContextText(sessionId: string, text: string): void {
   try {
     writeFileSync(contextTextPath(sessionId), text, "utf-8");
@@ -128,6 +141,30 @@ export class SessionManager {
    * backlog and never write the .air context file. Consumed (and cleared)
    * by finalizeSession, keyed by pane id. */
   private exitBacklogs = new Map<string, string>();
+  /** sessionId -> compacted history of earlier processes of a restored
+   * session. Merged in front of the live backlog at every checkpoint/finalize,
+   * otherwise the first checkpoint after a reattach overwrites the .air file
+   * with only the fresh process output and the history is gone for good. */
+  private restoredContext = new Map<string, string>();
+
+  private getRestored(sessionId: string): string {
+    const cached = this.restoredContext.get(sessionId);
+    if (cached !== undefined) return cached;
+    let text = "";
+    try {
+      const p = previousContextPath(sessionId);
+      if (existsSync(p)) text = readFileSync(p, "utf-8");
+    } catch {
+      /* best effort */
+    }
+    this.restoredContext.set(sessionId, text);
+    return text;
+  }
+
+  /** Compacted history = restored part + live backlog of the current panes. */
+  private compactSession(sessionId: string, backlogs: string[]): string {
+    return mergeRestoredContext(this.getRestored(sessionId), compactTerminalLog(backlogs.join("\n\n")));
+  }
 
   /** Injected by main.ts: global local-model/MCP flags + splash for extra panes. */
   agentExtrasFor?: (presetId: string) => { args: string[]; env: Record<string, string> };
@@ -311,11 +348,34 @@ export class SessionManager {
     // Reuse the record's id: reopening the same session must reopen THE
     // session, not fork a copy of it.
     const sessionId = record.id;
-    let session = this.sessions.get(sessionId);
+
+    // Idempotent: startup auto-restore, the renderer's "Öffnen" and a double
+    // click can all ask for the same session. If it already has a live pane,
+    // hand that pane back instead of spawning a second agent next to it.
+    const existing = this.sessions.get(sessionId);
+    const livePane = existing?.paneIds.find((id) => this.pty.has(id));
+    if (existing && livePane) return { ok: true, sessionId, paneId: livePane };
+
+    // Persist the history BEFORE the new process can checkpoint over the .air.
+    let history = "";
+    try {
+      if (record.contextPath && existsSync(record.contextPath)) history = readAirFile(record.contextPath);
+    } catch {
+      /* unreadable context: restore without history */
+    }
+    if (history) {
+      try {
+        writeFileSync(previousContextPath(sessionId), history, "utf-8");
+      } catch {
+        /* the in-memory copy below still protects this run */
+      }
+    }
+    this.restoredContext.set(sessionId, history || this.getRestored(sessionId));
+    let session = existing;
     if (session) {
-      // Still live in memory (tab was closed but pty kept running): add the
-      // new pane alongside the existing ones.
-      if (!session.paneIds.includes(paneId)) session.paneIds.push(paneId);
+      // In memory but without a live pane (agent exited/stopped): the new
+      // pane replaces the dead ones.
+      session.paneIds = [paneId];
       session.status = "running";
       session.endedAt = null;
     } else {
@@ -541,6 +601,41 @@ export class SessionManager {
     return this.pty.resize(paneId, cols, rows);
   }
 
+  /** Snapshot payload incl. what a reattach needs when the SQLite row is
+   * unavailable (preset/profile/model) and the resume flag, so a session
+   * that was running at quit is still restorable from the .json sidecar. */
+  private snapshotRecord(session: SessionState, contextPath: string, running: boolean): SessionRecord {
+    const pane = session.paneIds.map((id) => this.panes.get(id)).find(Boolean);
+    const row = getSession(session.id);
+    return {
+      ...session,
+      contextPath,
+      expiresAt: null,
+      presetId: pane?.presetId ?? row?.presetId ?? null,
+      profile: pane?.profile ?? row?.profile ?? null,
+      model: pane?.model ?? row?.model ?? null,
+      resume: running ? true : row?.resume ?? false
+    };
+  }
+
+  /** Sessions that were running when the app/PC went down (resume flag still
+   * set by finalize-on-quit / orphan marking) and have no live process now.
+   * main.ts restores exactly these at startup. */
+  listRestorable(projectIds: string[]): SessionRecord[] {
+    const out: SessionRecord[] = [];
+    for (const projectId of projectIds) {
+      for (const s of this.listSessions(projectId)) {
+        // Reparatur: eine vorhandene .air-Datei darf nie "verwaist" sein.
+        const air = join(contextDir(), `${s.id}.air`);
+        if (!s.contextPath && existsSync(air)) {
+          try { setSessionContextPath(s.id, air); s.contextPath = air; } catch { /* ignore */ }
+        }
+        if (s.resume && s.status !== "running" && !s.archivedAt) out.push(s);
+      }
+    }
+    return out.sort((a, b) => b.lastActiveAt - a.lastActiveAt);
+  }
+
   /** Lists live sessions from SQLite + finalized sessions from snapshot files. */
   listSessions(projectId: string): SessionRecord[] {
     // No auto-sweep: sessions are only removed by an explicit user delete.
@@ -568,7 +663,7 @@ export class SessionManager {
         const backlog = this.pty.getBacklog(paneId);
         if (backlog) parts.push(`--- Pane ${paneId} ---\n${compactTerminalLog(backlog)}`);
       }
-      return { ok: true, content: parts.join("\n\n") };
+      return { ok: true, content: mergeRestoredContext(this.getRestored(sessionId), parts.join("\n\n")) };
     }
     const record = getSession(sessionId) ?? loadSessionSnapshots().find((s) => s.id === sessionId) ?? null;
     if (record?.contextPath && existsSync(record.contextPath)) {
@@ -656,6 +751,12 @@ export class SessionManager {
     } catch {
       /* may not exist */
     }
+    try {
+      unlinkSync(previousContextPath(sessionId));
+    } catch {
+      /* may not exist */
+    }
+    this.restoredContext.delete(sessionId);
     // deleteSessionSnapshot was already called above when the row was
     // snapshot-only; calling it again is harmless for SQLite-backed rows.
   }
@@ -684,7 +785,7 @@ export class SessionManager {
         const b = this.pty.getBacklog(paneId);
         if (b) backlogs.push(`--- Pane ${paneId} ---\n${b}`);
       }
-      const compacted = compactTerminalLog(backlogs.join("\n\n"));
+      const compacted = this.compactSession(sessionId, backlogs);
       if (!compacted.trim()) continue;
       const contextPath = join(contextDir(), `${sessionId}.air`);
       const tmp = `${contextPath}.tmp`;
@@ -693,7 +794,7 @@ export class SessionManager {
         renameSync(tmp, contextPath); // atomic: never leaves a half-written file
         writeContextText(sessionId, compacted);
         setSessionContextPath(sessionId, contextPath);
-        writeSessionSnapshot({ ...session, contextPath, expiresAt: null }, contextPath);
+        writeSessionSnapshot(this.snapshotRecord(session, contextPath, true), contextPath);
         this.checkpointed.set(sessionId, session.lastActiveAt);
       } catch {
         /* best effort */
@@ -733,7 +834,7 @@ export class SessionManager {
     sessionId: string,
     retentionDays: number,
     sender: WebContents | undefined,
-    _code: number
+    code: number
   ): void {
     const pane = this.panes.get(paneId);
     const session = this.sessions.get(sessionId);
@@ -753,7 +854,9 @@ export class SessionManager {
         })
           ? "stopped"
           : "exited";
-        if (status === "exited") setSessionResume(sessionId, false); // agent quit on its own
+        // Nur ein sauberes Beenden (Exit-Code 0, z. B. /exit) schaltet das Wiederherstellen ab;
+        // ein getoeteter Prozess/Daemon-Verlust (Code != 0) soll beim Neustart wieder aufgenommen werden.
+        if (status === "exited" && code === 0) setSessionResume(sessionId, false);
         this.finalizeSession(sessionId, status, retentionDays, false);
       }
     }
@@ -778,11 +881,12 @@ export class SessionManager {
       if (backlog) backlogs.push(`--- Pane ${paneId} ---\n${backlog}`);
       this.exitBacklogs.delete(paneId);
     }
-    const compacted = compactTerminalLog(backlogs.join("\n\n"));
+    const compacted = this.compactSession(sessionId, backlogs);
     const now = Date.now();
+    const contextPath0 = join(contextDir(), `${sessionId}.air`);
     let contextPath: string | null = null;
     if (compacted.trim()) {
-      contextPath = join(contextDir(), `${sessionId}.air`);
+      contextPath = contextPath0;
       try {
         writeAirFile(contextPath, compacted);
         writeContextText(sessionId, compacted);
@@ -790,6 +894,9 @@ export class SessionManager {
         contextPath = null;
       }
     }
+    // Nothing new to write (empty backlog) must not orphan an .air file that
+    // an earlier checkpoint already produced: keep pointing at it.
+    if (!contextPath && existsSync(contextPath0)) contextPath = contextPath0;
 
     session.status = status;
     session.endedAt = now;
@@ -797,14 +904,7 @@ export class SessionManager {
     const expiresAt = null; // never auto-expire; manual delete only
     finalizeSession(sessionId, status, now, session.paneIds, contextPath, expiresAt);
     if (contextPath) {
-      writeSessionSnapshot(
-        {
-          ...session,
-          contextPath,
-          expiresAt
-        },
-        contextPath
-      );
+      writeSessionSnapshot(this.snapshotRecord(session, contextPath, false), contextPath);
     }
 
     if (!skipKill) {

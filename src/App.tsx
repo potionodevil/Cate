@@ -7,6 +7,7 @@ import React, { useEffect, useRef, useState } from "react";
 
 import { ProjectSidebar } from "./ProjectSidebar";
 import { UsageDashboard } from "./UsageDashboard";
+import { ProviderSkillsPage } from "./ProviderSkillsPage";
 import { SessionsView } from "./SessionsView";
 import { LoadingScreen } from "./LoadingScreen";
 import { Onboarding } from "./Onboarding";
@@ -18,15 +19,22 @@ import type { SessionCallbacks, Project, SessionRecord, PaneLayoutNode, AgentPre
 // @ts-expect-error - plain untyped .mjs helper, see layoutLogic.mjs for why
 import { initialPaneLayout, splitPaneLayout, collectPaneLeaves, gridArrangeLayout } from "./layoutLogic.mjs";
 import { Button } from "@/components/ui/button";
-import { ChevronRight, Minus, X } from "lucide-react";
+import { ChevronRight, Copy, Minus, PanelLeftClose, PanelLeftOpen, Square, X } from "lucide-react";
+import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { CommandPalette } from "./CommandPalette";
-import { DotGridBackdrop } from "./panels/PipelineVisual";
+import { PixelBackdrop } from "./PixelScene";
+import { SubagentDock } from "./SubagentDock";
 import { LiveMetrics } from "./LiveMetrics";
 import { RaycastOverlay } from "./RaycastOverlay";
 import { NewAgentPopover } from "./NewAgentPopover";
 import { HeaderThemePopover } from "./HeaderThemePopover";
 import { HeaderPluginsPopover } from "./HeaderPluginsPopover";
 import type { ThemeName } from "./themes";
+import { PluginManager } from "./panels/PluginManager";
+import { GitDiffPanel } from "./panels/GitDiffPanel";
+import { pluginRegistry, registerPlugin } from "./pluginRegistry";
+import type { PluginInfo } from "./pluginCatalog";
+import { IconGit } from "./icons";
 
 interface SessionNode {
   type: "session";
@@ -76,7 +84,7 @@ function inheritedPresetFor(tabs: SessionNode[], sessionId: string): string {
 }
 
 type BootPhase = "loading" | "onboarding" | "ready";
-type MainView = "workspace" | "sessions";
+type MainView = "workspace" | "sessions" | "skills";
 
 export function App() {
   const [bootPhase, setBootPhase] = useState<BootPhase>("loading");
@@ -105,6 +113,12 @@ export function App() {
   const [showDashboard, setShowDashboard] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
   const [sidebarPosition, setSidebarPosition] = useState<"left" | "right">("left");
+  // Sidebar ausblenden (Strg+\ oder Knopf in der Kopfzeile) — gibt dem Terminal die volle Breite; Wahl bleibt erhalten.
+  const [sidebarHidden, setSidebarHidden] = useState(() => {
+    try { return localStorage.getItem("cate.sidebarHidden") === "1"; } catch { return false; }
+  });
+  const [maximized, setMaximized] = useState(false);
+  useEffect(() => window.harness.onWindowMaximized?.(setMaximized), []);
   const [theme, setTheme] = useState<ThemeName>("nous");
   const [motionEnabled, setMotionEnabled] = useState(true);
   const [splitError, setSplitError] = useState<string | null>(null);
@@ -118,6 +132,92 @@ export function App() {
 
   useEffect(() => {
     window.harness.listAgentPresets().then(setAgentPresets).catch(() => {});
+  }, []);
+
+  // Plugin-Host (Hauptprozess) <-> Renderer-Registry: Liste/Konfiguration laden,
+  // Schalter im Header-Popover und im Plugin-Manager bleiben synchron.
+  const [plugins, setPlugins] = useState<PluginInfo[]>([]);
+  const [pluginConfig, setPluginConfig] = useState<Record<string, Record<string, unknown>>>({});
+  const [pluginManagerOpen, setPluginManagerOpen] = useState(false);
+  const [showGitDiff, setShowGitDiff] = useState(false);
+  const [appDataDir, setAppDataDir] = useState<string | undefined>(undefined);
+  const pluginsRef = useRef<PluginInfo[]>([]);
+  pluginsRef.current = plugins;
+
+  async function reloadPlugins() {
+    try {
+      const [list, cfg] = await Promise.all([window.harness.pluginsList(), window.harness.pluginsGetConfig()]);
+      setPlugins(list);
+      setPluginConfig(cfg);
+      for (const p of list) {
+        pluginRegistry.registerManifest({ id: p.id, name: p.name, version: p.version, description: p.description, category: p.category });
+        if (pluginRegistry.isEnabled(p.id) !== p.enabled) pluginRegistry.setEnabled(p.id, p.enabled);
+      }
+    } catch {
+      /* Host nicht erreichbar: Manager bleibt leer */
+    }
+  }
+
+  async function handlePluginToggle(id: string, enabled: boolean) {
+    setPlugins((prev) => prev.map((p) => (p.id === id ? { ...p, enabled, status: enabled ? "active" : "inactive" } : p)));
+    if (pluginRegistry.isEnabled(id) !== enabled) pluginRegistry.setEnabled(id, enabled);
+    await window.harness.pluginsSetEnabled(id, enabled).catch(() => undefined);
+    void reloadPlugins();
+  }
+
+  async function handlePluginConfig(id: string, key: string, value: unknown) {
+    await window.harness.pluginsSetConfig(id, key, value).catch(() => undefined);
+    void reloadPlugins();
+  }
+
+  useEffect(() => {
+    void reloadPlugins();
+    void window.harness.pluginsGetAppDataDir().then(setAppDataDir).catch(() => {});
+    // Aktion "Git-Diff" (Header-Popover > Aktionen) schaltet das rechte Panel um.
+    const unregister = registerPlugin({
+      id: "gitDiff",
+      name: "Git-Diff",
+      version: "1.0.0",
+      slots: ["action"],
+      actions: [{ id: "gitDiff.toggle", label: "Git-Diff anzeigen", icon: IconGit, contextKinds: ["project"], run: () => setShowGitDiff((v) => !v) }]
+    });
+    // Schalter im Header-Popover (Registry) zurueck in den Host spiegeln.
+    const unsubscribe = pluginRegistry.subscribe(() => {
+      for (const p of pluginsRef.current) {
+        if (pluginRegistry.isEnabled(p.id) !== p.enabled) void handlePluginToggle(p.id, pluginRegistry.isEnabled(p.id));
+      }
+    });
+    return () => {
+      unsubscribe();
+      unregister();
+    };
+  }, []);
+
+  useEffect(() => {
+    try { localStorage.setItem("cate.sidebarHidden", sidebarHidden ? "1" : "0"); } catch { /* privater Modus: egal */ }
+  }, [sidebarHidden]);
+
+  /** Öffnet das Git-Diff-Panel; ist das Plugin noch aus, führt der Knopf stattdessen zur Plugin-Verwaltung, damit er nie wirkungslos bleibt. */
+  const toggleGitDiff = () => {
+    if (plugins.find((p) => p.id === "gitDiff")?.enabled) setShowGitDiff((v) => !v);
+    else setPluginManagerOpen(true);
+  };
+  const toggleGitDiffRef = useRef(toggleGitDiff);
+  toggleGitDiffRef.current = toggleGitDiff;
+
+  // Strg+\: Sidebar ein-/ausblenden.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if ((e.ctrlKey || e.metaKey) && e.shiftKey && e.key.toLowerCase() === "g") {
+        e.preventDefault();
+        toggleGitDiffRef.current();
+      } else if ((e.ctrlKey || e.metaKey) && e.key === "\\") {
+        e.preventDefault();
+        setSidebarHidden((v) => !v);
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
   }, []);
 
   // Ctrl+K / Cmd+K: toggle the command palette.
@@ -211,6 +311,33 @@ export function App() {
       cancelled = true;
     };
   }, [activeProject?.id]);
+
+  // Beim Start das Projekt der zuletzt aktiven, noch laufenden bzw. wiederherstellbaren Session oeffnen.
+  useEffect(() => {
+    if (bootPhase !== "ready" || activeProject) return;
+    let cancelled = false;
+    void (async () => {
+      try {
+        const projects: Project[] = await window.harness.listProjects();
+        let best: { p: Project; at: number } | null = null;
+        for (const p of projects) {
+          const list = await window.harness.listSessions(p.id);
+          for (const s of list) {
+            if (s.archivedAt || (s.status !== "running" && !s.resume)) continue;
+            if (!best || s.lastActiveAt > best.at) best = { p, at: s.lastActiveAt };
+          }
+        }
+        if (cancelled || !best) return;
+        const chosen = best.p;
+        setActiveProject((cur) => cur ?? chosen);
+      } catch {
+        /* kein Auto-Open */
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [bootPhase, activeProject?.id]);
 
   // The desktop cat asks to show a session (bubble click / double-click on the
   // cat): switch to its project if needed, then focus its tab. Refs keep the
@@ -307,13 +434,12 @@ export function App() {
     setMainView("workspace");
   }
 
-  /** Rechtsklick auf "Neue Session starten": statt direkt den Standard-CLI
+  /** Linksklick auf "Anderen Agent wählen": statt direkt den Standard-CLI
    * (Hermes bzw. das Projekt-Default) zu starten, zeigt dies den
    * NewAgentPopover zur Auswahl eines beliebigen installierten/verbundenen
-   * Agenten (Claude Code, Codex, OpenCode, ...). Normaler Linksklick bleibt
-   * der schnelle Standard-Start über openWorkspace(). */
-  function openNewAgentPicker(e: React.MouseEvent) {
-    e.preventDefault();
+   * Agenten (Claude Code, Codex, OpenCode, ...). Der Standard-Start läuft
+   * über openWorkspace(). Kein Kontextmenü: Menüs öffnen nur per Linksklick. */
+  function openNewAgentPicker() {
     setShowNewAgentPopover(true);
   }
 
@@ -530,6 +656,8 @@ export function App() {
 
   return (
     <div className={startupReveal ? "hh-startup-shell hh-startup-shell-ready" : "hh-startup-shell"} style={{ display: "flex", flex: 1, minHeight: 0, height: "100vh", flexDirection: sidebarPosition === "right" ? "row-reverse" : "row" }}>
+      <PixelBackdrop />
+      <div style={{ display: sidebarHidden ? "none" : "contents" }}>
       <ProjectSidebar
         activeProjectId={activeProject?.id ?? null}
         onSelect={selectProject}
@@ -538,36 +666,63 @@ export function App() {
         position={sidebarPosition}
         showDashboard={showDashboard}
         onToggleDashboard={() => setShowDashboard((v) => !v)}
+        showProviderSkills={mainView === "skills"}
+        onToggleProviderSkills={() => setMainView(mainView === "skills" ? "workspace" : "skills")}
         onOpenSettings={() => setShowSettings(true)}
         onOpenSession={handleReattach}
         onSessionDeleted={handleSessionDeleted}
         onOpenSessionsView={() => setMainView("sessions")}
+        onOpenPalette={() => setShowPalette(true)}
       />
+      </div>
       <div className="hh-workstation-shell" style={{ flex: 1, display: "flex", flexDirection: "column", minWidth: 0 }}>
-        <DotGridBackdrop dotSpacing={24} opacity={0.28} />
         <div className="hh-workstation-content">
         <header className="hh-topbar hh-entrance-topbar">
-          <div className="hh-topbar-drag" aria-label="Fensterleiste">
+          <div className="hh-topbar-drag" aria-label="Fensterleiste" onDoubleClick={(e) => { if (e.target === e.currentTarget) void window.harness.toggleMaximizeWindow().then(setMaximized); }}>
+            <button
+              type="button"
+              className="hh-topbar-sidebar-toggle"
+              onClick={() => setSidebarHidden((v) => !v)}
+              aria-label={sidebarHidden ? "Sidebar einblenden" : "Sidebar ausblenden"}
+              aria-pressed={sidebarHidden}
+              title={sidebarHidden ? "Sidebar einblenden (Strg+\)" : "Sidebar ausblenden (Strg+\)"}
+            >
+              {sidebarHidden ? <PanelLeftOpen size={15} /> : <PanelLeftClose size={15} />}
+            </button>
             <span className="hh-topbar-brand"><LogoMark size={18} />Cate</span>
             <ChevronRight size={13} aria-hidden="true" />
             <strong>{activeProject ? activeProject.name : <span className="hh-faint">Kein Projekt gewählt</span>}</strong>
           </div>
-          {activeProject && !showDashboard && (
-            <nav className="hh-segmented hh-topbar-tabs" aria-label="Hauptansicht">
-              <button className={mainView === "workspace" ? "active" : ""} onClick={() => setMainView("workspace")}>
-                Workspace
-              </button>
-              <button className={mainView === "sessions" ? "active" : ""} onClick={() => setMainView("sessions")}>
-                Sessions
-              </button>
-            </nav>
+          {activeProject && !showDashboard && mainView !== "skills" && (
+            <Tabs className="hh-topbar-tabs" value={mainView} onValueChange={(v) => setMainView(v as typeof mainView)} aria-label="Hauptansicht">
+              <TabsList className="h-[28px] gap-0.5 rounded-lg border border-[var(--border)] bg-[var(--bg-primary)] p-0.5">
+                <TabsTrigger value="workspace" className="h-full min-w-0 rounded-md px-2.5 text-[12px] font-medium text-[var(--text-secondary)] transition-colors duration-fast hover:text-[var(--text-primary)] data-[state=active]:bg-[var(--bg-active)] data-[state=active]:text-[var(--text-primary)] data-[state=active]:shadow-none">Workspace</TabsTrigger>
+                <TabsTrigger value="sessions" className="h-full min-w-0 rounded-md px-2.5 text-[12px] font-medium text-[var(--text-secondary)] transition-colors duration-fast hover:text-[var(--text-primary)] data-[state=active]:bg-[var(--bg-active)] data-[state=active]:text-[var(--text-primary)] data-[state=active]:shadow-none">Sessions</TabsTrigger>
+              </TabsList>
+            </Tabs>
           )}
           <div className="hh-window-controls" aria-label="Fenstersteuerung">
+            {activeProject && (
+              <button
+                type="button"
+                className="hh-topbar-git"
+                aria-pressed={showGitDiff}
+                aria-label="Git-Diff ein- oder ausblenden"
+                title={plugins.find((p) => p.id === "gitDiff")?.enabled ? "Git-Diff (Strg+Umschalt+G)" : "Git-Diff: Plugin zuerst aktivieren"}
+                onClick={toggleGitDiff}
+              >
+                <IconGit size={14} />
+                <span>Diff</span>
+              </button>
+            )}
             <LiveMetrics compact />
             <HeaderThemePopover theme={theme} onThemeChange={setTheme} />
-            <HeaderPluginsPopover activeProjectId={activeProject?.id ?? null} />
+            <HeaderPluginsPopover activeProjectId={activeProject?.id ?? null} onManage={() => setPluginManagerOpen(true)} />
             <button className="hh-window-control" type="button" title="Minimieren" aria-label="Fenster minimieren" onClick={() => void window.harness.minimizeWindow()}>
               <Minus size={15} aria-hidden="true" />
+            </button>
+            <button className="hh-window-control" type="button" title={maximized ? "Wiederherstellen" : "Maximieren"} aria-label={maximized ? "Fenster wiederherstellen" : "Fenster maximieren"} onClick={() => void window.harness.toggleMaximizeWindow().then(setMaximized)}>
+              {maximized ? <Copy size={13} aria-hidden="true" /> : <Square size={13} aria-hidden="true" />}
             </button>
             <button className="hh-window-control hh-window-control-close" type="button" title="Schließen" aria-label="Fenster schließen" onClick={() => void window.harness.closeWindow()}>
               <X size={15} aria-hidden="true" />
@@ -610,6 +765,7 @@ export function App() {
             </div>
           )}
           {!activeProject && <Greeting name={userName} />}
+          {activeProject && <SubagentDock projectId={activeProject.id} />}
           {activeProject && showDashboard && (
             <div className="hh-slide-in" style={{ height: "100%" }}>
               <UsageDashboard profile={activeProject.hermesProfile} />
@@ -620,16 +776,19 @@ export function App() {
               <SessionsView projectId={activeProject.id} onReattach={handleReattach} />
             </div>
           )}
+          {activeProject && !showDashboard && mainView === "skills" && (
+            <div className="hh-slide-in" style={{ height: "100%" }}>
+              <ProviderSkillsPage project={activeProject} />
+            </div>
+          )}
           {activeProject && !showDashboard && mainView === "workspace" && !activeTab && (
             <div style={{ height: "100%", display: "flex", alignItems: "center", justifyContent: "center" }}>
               <div style={{ textAlign: "center", display: "flex", flexDirection: "column", gap: "var(--space-3)" }}>
                 <div className="hh-muted">Noch keine Session für dieses Projekt geöffnet.</div>
-                <Button onClick={() => openWorkspace(activeProject)} onContextMenu={openNewAgentPicker}>
-                  Neue Session starten
-                </Button>
-                <span className="hh-faint" style={{ fontSize: "var(--text-xs)" }}>
-                  Rechtsklick: anderen installierten Agent wählen
-                </span>
+                <div style={{ display: "flex", gap: "var(--space-2)", justifyContent: "center" }}>
+                  <Button onClick={() => openWorkspace(activeProject)}>Neue Session starten</Button>
+                  <Button variant="outline" onClick={openNewAgentPicker}>Anderen Agent wählen</Button>
+                </div>
               </div>
             </div>
           )}
@@ -637,6 +796,21 @@ export function App() {
             <div className="hh-slide-in" style={{ height: "100%" }}>
               <LayoutRenderer node={activeTab} callbacks={sessionCallbacks} />
             </div>
+          )}
+          {activeProject && showGitDiff && plugins.find((p) => p.id === "gitDiff")?.enabled && (
+            <aside
+              className="hh-gitdiff-aside"
+              aria-label="Git-Diff"
+              data-testid="git-diff-panel"
+              style={{ position: "absolute", top: 0, right: 0, bottom: 0, width: "min(560px, 60%)", zIndex: 30, display: "flex", flexDirection: "column", borderLeft: "1px solid var(--border)", background: "var(--bg-primary)" }}
+            >
+              <GitDiffPanel
+                projectRoot={activeProject.folder}
+                appDataDir={appDataDir}
+                call={(op, args) => window.harness.pluginsInvoke("gitDiff", op, args)}
+                onClose={() => setShowGitDiff(false)}
+              />
+            </aside>
           )}
         </div>
         </div>
@@ -679,6 +853,15 @@ export function App() {
           onPaneStarted={handlePaneStarted}
         />
       )}
+      <PluginManager
+        plugins={plugins}
+        config={pluginConfig}
+        open={pluginManagerOpen}
+        onOpenChange={setPluginManagerOpen}
+        onToggle={(id, enabled) => void handlePluginToggle(id, enabled)}
+        onConfigChange={(id, key, value) => void handlePluginConfig(id, key, value)}
+        onInvoke={(id, op, args) => window.harness.pluginsInvoke(id, op, args, activeProject?.folder)}
+      />
       <RaycastOverlay />
     </div>
   );

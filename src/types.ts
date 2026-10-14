@@ -3,6 +3,8 @@
  * Dieser Code ist geistiges Eigentum von R.S. Vervielfältigung, Weitergabe oder
  * Nutzung ohne ausdrückliche schriftliche Erlaubnis von R.S. ist untersagt.
  */
+import type { PluginInfo } from "./pluginCatalog";
+
 export interface PluginManifest {
   id: string;
   name: string;
@@ -88,12 +90,42 @@ export interface PetSettings {
   speed: number;
   area: "floor" | "screen" | "sit";
   anchor: "left" | "center" | "right";
-  /** The one animal that visits the cat. */
-  companion: "none" | "bunny" | "mouse" | "bird" | "butterfly";
+  /** The one animal shown on the desktop: cat with an optional companion — or bunny alone. */
+  petType: "cat" | "bunny";
+  /** The one animal that visits the cat. bunny is a main pet option now, not a companion. */
+  companion: "none" | "mouse" | "bird" | "butterfly";
   companionArea: "floor" | "top" | "screen";
   followOnNotify: boolean;
   idleSeconds: number;
   bubbleSeconds: number;
+  /** Electron display id the cat lives on; null = main display. */
+  displayId: number | null;
+  opacity: number;
+  alwaysOnTop: boolean;
+  clickThrough: boolean;
+  followCursor: boolean;
+  groomEvery: number;
+  napChance: number;
+}
+
+/** A connected display as the cat settings see it (mirrors electron/petDisplays.ts). */
+export interface PetDisplayInfo {
+  id: number;
+  index: number;
+  name: string;
+  width: number;
+  height: number;
+  scaleFactor: number;
+  primary: boolean;
+  bounds: { x: number; y: number; width: number; height: number };
+  workArea: { x: number; y: number; width: number; height: number };
+}
+
+export interface PetDisplayList {
+  displays: PetDisplayInfo[];
+  selectedId: number | null;
+  activeId: number;
+  fallback: boolean;
 }
 
 export interface HarnessApi {
@@ -122,6 +154,9 @@ export interface HarnessApi {
   attachSessionPane(paneId: string): Promise<{ backlog: string } | null>;
   exportSessionPane(paneId: string): Promise<{ ok: boolean; path?: string; message?: string }>;
   writeSessionPane(paneId: string, data: string): void;
+  /** Renderer-seitige Warte-Erkennung: Pane meldet „wartet auf Eingabe" an den
+   * Main-Prozess (Katzen-Reaktion). Kein DB-Status. */
+  setPaneWaitState(sessionId: string, waiting: boolean): void;
   resizeSessionPane(paneId: string, cols: number, rows: number): void;
   onSessionPaneData(paneId: string, cb: (data: string) => void): () => void;
   onSessionPaneExit(paneId: string, cb: (code: number) => void): () => void;
@@ -208,9 +243,23 @@ export interface HarnessApi {
   getMotionEnabled(): Promise<boolean>;
   setMotionEnabled(enabled: boolean): Promise<{ ok: boolean }>;
   minimizeWindow(): Promise<void>;
+  toggleMaximizeWindow(): Promise<boolean>;
+  attachFromClipboard(): Promise<{ ok: true; paths: string[]; text?: string } | { ok: false; message: string }>;
+  attachPickFiles(): Promise<{ ok: true; paths: string[]; text?: string } | { ok: false; message: string }>;
+  attachSaveBytes(name: string, data: Uint8Array): Promise<{ ok: true; paths: string[]; text?: string } | { ok: false; message: string }>;
+  pathForFile(file: File): string;
+  listSubagents(): Promise<SubagentInfo[]>;
+  readSubagent(id: string): Promise<SubagentLine[]>;
+  onWindowMaximized(cb: (maximized: boolean) => void): () => void;
   closeWindow(): Promise<void>;
   listPluginManifests(): Promise<PluginManifest[]>;
   onPluginShortcut(cb: () => void): () => void;
+  pluginsList(): Promise<PluginInfo[]>;
+  pluginsSetEnabled(id: string, enabled: boolean): Promise<{ ok: boolean; message?: string }>;
+  pluginsSetConfig(id: string, key: string, value: unknown): Promise<{ ok: boolean; message?: string }>;
+  pluginsGetConfig(): Promise<Record<string, Record<string, unknown>>>;
+  pluginsGetAppDataDir(): Promise<string>;
+  pluginsInvoke(id: string, op: string, args?: unknown, projectRoot?: string): Promise<any>;
   getAgentDefaults(): Promise<{ defaultPresetId: string; defaultModel: string | null }>;
   listLocalModels(endpoint?: string): Promise<{ ok: boolean; models: string[]; message?: string }>;
   getAgentConfig(): Promise<{
@@ -232,6 +281,8 @@ export interface HarnessApi {
   setPetSettings(patch: Partial<PetSettings>): Promise<PetSettings>;
   resetPetSettings(): Promise<PetSettings>;
   testPet(): Promise<void>;
+  listPetDisplays(): Promise<PetDisplayList>;
+  onPetDisplaysChanged(cb: (list: PetDisplayList) => void): () => void;
   /** The desktop cat asked to show a running session (bubble click / double-click). */
   onPetOpenSession(cb: (info: { sessionId: string; projectId: string }) => void): () => void;
   pickFolder(): Promise<string | null>;
@@ -263,6 +314,7 @@ export interface HarnessApi {
     | { ok: true; value: { kind: "file" | "clipboard" | "text"; metadata: Record<string, string | number | boolean | undefined>; raw: string } }
     | { ok: false; error: { code: string; message: string } }
   >;
+  providerSkills(presetId: string, opts?: { profile?: string; projectFolder?: string }): Promise<ProviderSkillsResult>;
 }
 
 export interface AuthCredentialRow {
@@ -301,8 +353,61 @@ export interface AgentPreset {
   supportsHermesFlags: boolean;
 }
 
+/* ---------------- Skills & Plugins je Provider (Renderer-Spiegel) ---------------- */
+
+export interface ProviderSkillRow {
+  name: string;
+  category?: string;
+  source?: string;
+  trust?: string;
+  status: "enabled" | "disabled" | string;
+}
+
+export interface ProviderPluginRow {
+  name: string;
+  version?: string;
+  source?: string;
+  status: "enabled" | "disabled" | string;
+  marketplace?: string;
+}
+
+export interface ProviderConfigRow {
+  name: string;
+  value?: string;
+}
+
+/** Ergebnis des read-only Collectors (Spiegel von electron/providerSkills.ts). */
+export interface ProviderSkillsResult {
+  ok: boolean;
+  message?: string;
+  skills: ProviderSkillRow[];
+  plugins: ProviderPluginRow[];
+  configs: ProviderConfigRow[];
+  paths: { skills?: string; plugins?: string; configs?: string };
+  countLine?: string;
+}
+
 declare global {
   interface Window {
     harness: HarnessApi;
   }
+}
+
+/** Ein Subagent, den Claude Code oder Hermes in einem Projekt gestartet hat (gelesen aus deren Protokollen). */
+export interface SubagentInfo {
+  id: string;
+  source: "claude" | "hermes";
+  projectId: string;
+  title: string;
+  agentType: string | null;
+  startedAt: number;
+  updatedAt: number;
+  done: boolean;
+  ref: string;
+}
+
+/** Eine Zeile im Mitlese-Terminal eines Subagenten. */
+export interface SubagentLine {
+  kind: "task" | "text" | "tool" | "result";
+  text: string;
 }
