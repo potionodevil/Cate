@@ -88,6 +88,7 @@ export interface PetSettings {
   anchor: "left" | "center" | "right";
   /** The one animal that visits the cat. */
   companion: "none" | "bunny" | "mouse" | "bird" | "butterfly";
+  companionArea: "floor" | "top" | "screen";
   followOnNotify: boolean;
   idleSeconds: number;
   bubbleSeconds: number;

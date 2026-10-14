@@ -34,6 +34,9 @@ interface ManagedPane {
    * stays synchronous (replay into a re-attached xterm, .air compaction). */
   buffer: string[];
   bufferBytes: number;
+  /** Zuletzt gemeldete Terminalgröße; wird beim Start nachgereicht, falls sie während des Splash-Screens eintraf. */
+  cols?: number;
+  rows?: number;
 }
 
 interface Watcher {
@@ -179,7 +182,9 @@ export class PtyManager {
         shell: opts.shellOverride || DEFAULT_SHELL,
         args: opts.args || [],
         cwd: opts.cwd,
-        env: { ...process.env, ...opts.env }
+        env: { ...process.env, ...opts.env },
+        cols: managed.cols,
+        rows: managed.rows
       });
     };
 
@@ -212,6 +217,7 @@ export class PtyManager {
   resize(id: string, cols: number, rows: number): boolean {
     const pane = this.panes.get(id);
     if (!pane) return false;
+    if (cols > 0 && rows > 0) { pane.cols = cols; pane.rows = rows; }
     if (pane.launched && cols > 0 && rows > 0) send(this.sock, { t: "resize", id, cols, rows });
     return true;
   }

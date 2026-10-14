@@ -37,6 +37,12 @@ const COMPANIONS: { value: PetSettings["companion"]; label: string }[] = [
   { value: "none", label: "Keins" }
 ];
 
+const COMPANION_AREAS: { value: PetSettings["companionArea"]; label: string }[] = [
+  { value: "floor", label: "Unterer Rand" },
+  { value: "top", label: "Oberer Rand" },
+  { value: "screen", label: "Ganzer Bildschirm" }
+];
+
 /** "Katze" tab of the settings dialog: every change is saved and applied to the live cat immediately. */
 export function PetSettingsTab() {
   const [s, setS] = useState<PetSettings | null>(null);
@@ -127,6 +133,16 @@ export function PetSettingsTab() {
             <SelectTrigger className="w-full"><SelectValue /></SelectTrigger>
             <SelectContent>
               {COMPANIONS.map((a) => <SelectItem key={a.value} value={a.value}>{a.label}</SelectItem>)}
+            </SelectContent>
+          </Select>
+        </div>
+
+        <div className="flex flex-col gap-1">
+          <Label>Bewegungsbereich des Tiers</Label>
+          <Select value={s.companionArea} onValueChange={(companionArea) => void change({ companionArea: companionArea as PetSettings["companionArea"] })}>
+            <SelectTrigger className="w-full"><SelectValue /></SelectTrigger>
+            <SelectContent>
+              {COMPANION_AREAS.map((a) => <SelectItem key={a.value} value={a.value}>{a.label}</SelectItem>)}
             </SelectContent>
           </Select>
         </div>

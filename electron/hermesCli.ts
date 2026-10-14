@@ -103,8 +103,11 @@ function escapeRegExp(s: string): string {
  * same as before this existed. */
 export async function hermesDisableTelemetryPrompt(profile: string): Promise<void> {
   try {
-    await runHermes(["config", "set", "telemetry.shared_metrics.enabled", "false", "--profile", profile], 15_000);
-    await runHermes(["config", "set", "telemetry.shared_metrics.send", "false", "--profile", profile], 15_000);
+    // beide Einstellungen gleichzeitig setzen: jeder Aufruf startet die Hermes-CLI neu, das spart die Hälfte der Wartezeit
+    await Promise.all([
+      runHermes(["config", "set", "telemetry.shared_metrics.enabled", "false", "--profile", profile], 15_000),
+      runHermes(["config", "set", "telemetry.shared_metrics.send", "false", "--profile", profile], 15_000)
+    ]);
   } catch {
     // best-effort only — see docstring
   }

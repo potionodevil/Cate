@@ -1803,3 +1803,23 @@ html[data-hh-motion="off"] .hh-pane-state svg,
 html[data-hh-motion="off"] .hh-pane-state rect,
 html[data-hh-motion="off"] .hh-logo-eye,
 html[data-hh-motion="off"] .hh-cursor { animation: none !important; }
+
+/* Blinkender Terminal-Cursor hinter Ladetexten (Ladebildschirm, Projekt-Anlegen) */
+.hh-cursor { display: inline-block; width: 0.6em; height: 1.1em; margin-left: 0.25em; vertical-align: text-bottom; background: var(--accent); animation: hh-cursor 1.1s steps(1) infinite; }
+@keyframes hh-cursor { 0%, 55% { opacity: 1; } 56%, 100% { opacity: 0; } }
+@media (prefers-reduced-motion: reduce) { .hh-cursor { animation: none; } }
+
+/* Arbeitsanzeige im Terminal: trabende Katze + wandernde Punkte, solange der Agent Ausgabe erzeugt */
+.hh-working {
+  position: absolute; right: 14px; bottom: 10px; z-index: 2; pointer-events: none;
+  display: inline-flex; align-items: center; gap: 8px; padding: 3px 10px 3px 6px;
+  background: color-mix(in srgb, var(--bg-elevated) 92%, transparent);
+  border: 1px solid var(--border-strong); border-radius: 999px;
+  font-family: var(--font-brand); font-size: 10px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--text-secondary);
+}
+.hh-working-dots { display: inline-flex; gap: 3px; }
+.hh-working-dots i { width: 4px; height: 4px; background: var(--accent); animation: hh-dot 1.2s steps(1) infinite; }
+.hh-working-dots i:nth-child(2) { animation-delay: .3s; }
+.hh-working-dots i:nth-child(3) { animation-delay: .6s; }
+@keyframes hh-dot { 0%, 100% { opacity: .25; } 25% { opacity: 1; } }
+@media (prefers-reduced-motion: reduce) { .hh-working-dots i { animation: none; opacity: 1; } }

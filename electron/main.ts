@@ -692,7 +692,8 @@ app.whenReady().then(async () => {
   ipcMain.handle("project:create", async (_e, { name, folder, icon, defaultModel }: { name: string; folder: string; icon?: string; defaultModel?: string }) => {
     const hermesProfile = slugifyProfileName(name);
     const result = await hermesProfileCreate(hermesProfile);
-    if (result.ok) await hermesDisableTelemetryPrompt(hermesProfile);
+    // läuft im Hintergrund weiter: das Projekt erscheint sofort, die Telemetrie-Voreinstellung ist nur Komfort
+    if (result.ok) void hermesDisableTelemetryPrompt(hermesProfile);
     const state = loadState();
     const project: Project = {
       id: randomUUID(),

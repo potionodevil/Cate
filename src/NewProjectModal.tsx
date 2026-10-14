@@ -15,6 +15,7 @@ import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { ModelInput } from "@/components/ModelInput";
 import { EmojiPickerButton } from "@/components/EmojiPicker";
 import { cn } from "@/lib/utils";
+import { CatSprite } from "./CatSprite";
 
 type CreateMode = "folder" | "git";
 
@@ -217,6 +218,20 @@ export function NewProjectModal({
   return (
     <Dialog open onOpenChange={(open) => !open && onClose()}>
       <DialogContent className="max-w-[520px]" aria-label={isEdit ? "Projekt bearbeiten" : "Neues Projekt"}>
+        {busy && (
+          <div
+            role="status"
+            aria-live="polite"
+            className="absolute inset-0 z-10 flex flex-col items-center justify-center gap-4 rounded-[inherit]"
+            style={{ background: "color-mix(in srgb, var(--bg-elevated) 94%, transparent)", fontFamily: "var(--font-brand)" }}
+          >
+            <CatSprite scale={5} walk />
+            <div style={{ fontSize: "var(--text-sm)", letterSpacing: "0.08em", textTransform: "uppercase" }}>
+              {isEdit ? "Speichere" : "Projekt wird angelegt"}
+              <span className="hh-cursor" aria-hidden />
+            </div>
+          </div>
+        )}
         <DialogHeader>
           <DialogTitle>{isEdit ? "Projekt bearbeiten" : "Neues Projekt"}</DialogTitle>
         </DialogHeader>

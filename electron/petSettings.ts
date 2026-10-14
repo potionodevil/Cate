@@ -20,6 +20,8 @@ export interface PetSettings {
   anchor: "left" | "center" | "right";
   /** The one animal that visits the cat (only one at a time). */
   companion: "none" | "bunny" | "mouse" | "bird" | "butterfly";
+  /** Wo das Tier unterwegs sein darf: unten am Rand, oben am Rand oder auf dem ganzen Bildschirm. */
+  companionArea: "floor" | "top" | "screen";
   /** Jump to the monitor I'm working on when a session reports "fertig". */
   followOnNotify: boolean;
   /** A pane counts as done after this many seconds without output. */
@@ -38,6 +40,7 @@ export const PET_DEFAULTS: PetSettings = {
   area: "screen",
   anchor: "center",
   companion: "bunny",
+  companionArea: "floor",
   followOnNotify: true,
   idleSeconds: 8,
   bubbleSeconds: 10
@@ -62,6 +65,7 @@ export function sanitizePet(patch: unknown, base: PetSettings = PET_DEFAULTS): P
     area: pick(p.area, ["floor", "screen", "sit"], base.area),
     anchor: pick(p.anchor, ["left", "center", "right"], base.anchor),
     companion: pick(p.companion, ["none", "bunny", "mouse", "bird", "butterfly"], base.companion),
+    companionArea: pick(p.companionArea, ["floor", "top", "screen"], base.companionArea),
     followOnNotify: typeof p.followOnNotify === "boolean" ? p.followOnNotify : base.followOnNotify,
     idleSeconds: num(p.idleSeconds, 3, 60, base.idleSeconds),
     bubbleSeconds: num(p.bubbleSeconds, 3, 30, base.bubbleSeconds)
@@ -78,7 +82,7 @@ export interface Rect {
 /** Window rectangle for the cat on a display's work area: the whole screen when it may wander,
  * otherwise a strip along the bottom tall enough for the sprite plus bubble/prompt. */
 export function petBounds(s: PetSettings, wa: Rect): Rect {
-  if (s.area === "screen") return { ...wa };
+  if (s.area === "screen" || (s.companion !== "none" && s.companionArea !== "floor")) return { ...wa };
   const height = Math.min(wa.height, 24 * s.scale + 220);
   return { x: wa.x, y: wa.y + wa.height - height, width: wa.width, height };
 }

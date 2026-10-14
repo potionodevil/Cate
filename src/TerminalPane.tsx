@@ -3,6 +3,7 @@
  * Dieser Code ist geistiges Eigentum von R.S. Vervielfältigung, Weitergabe oder
  * Nutzung ohne ausdrückliche schriftliche Erlaubnis von R.S. ist untersagt.
  */
+import { CatSprite } from "./CatSprite";
 import React, { useEffect, useRef, useState } from "react";
 import { Terminal } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
@@ -307,6 +308,13 @@ export function TerminalPane({ paneId, sessionId, label, presetId, profile, mode
       ) : (
         <div className="hh-pane-body" onContextMenu={openImproveMenu}>
           <div ref={containerRef} className="hh-term" />
+          {state === "working" && (
+            <div className="hh-working" role="status" aria-live="polite">
+              <CatSprite scale={1.5} walk />
+              <span>Agent arbeitet</span>
+              <span className="hh-working-dots" aria-hidden><i /><i /><i /></span>
+            </div>
+          )}
           {improve && (
             <div
               role="dialog"

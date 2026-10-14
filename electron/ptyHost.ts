@@ -42,7 +42,7 @@ function exitWhenIdle(): void {
   }, 30_000);
 }
 
-function spawnPane(id: string, shell: string, args: string[], cwd: string, env: Record<string, string>): void {
+function spawnPane(id: string, shell: string, args: string[], cwd: string, env: Record<string, string>, cols = 80, rows = 24): void {
   const pane: Pane = { kind: "pty", proc: null, buffer: [], bufferBytes: 0 };
   const onData = (data: string) => {
     pushBounded(pane, data);
@@ -55,7 +55,7 @@ function spawnPane(id: string, shell: string, args: string[], cwd: string, env: 
   };
   try {
     if (ptyModule) {
-      pane.proc = ptyModule.spawn(shell, args, { name: "xterm-color", cols: 80, rows: 24, cwd, env });
+      pane.proc = ptyModule.spawn(shell, args, { name: "xterm-color", cols, rows, cwd, env });
       pane.proc.onData(onData);
       pane.proc.onExit(({ exitCode }: { exitCode: number }) => onExit(exitCode));
     } else {
@@ -88,7 +88,7 @@ function handle(sock: Socket, m: any): void {
   const pane = panes.get(m.id);
   switch (m.t) {
     case "spawn":
-      spawnPane(m.id, m.shell, m.args ?? [], m.cwd, m.env ?? {});
+      spawnPane(m.id, m.shell, m.args ?? [], m.cwd, m.env ?? {}, m.cols > 0 ? m.cols : 80, m.rows > 0 ? m.rows : 24);
       break;
     case "write":
       if (pane?.kind === "pty") pane.proc.write(m.data);

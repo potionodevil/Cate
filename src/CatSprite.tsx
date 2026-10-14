@@ -12,8 +12,8 @@ const PAL: Record<string, string> = {
   n: "#e8758c", c: "#ff7a1a", y: "#ffd24a", t: "#ff6f8a", k: "#ffe08a", z: "#8fb8ff"
 };
 
-/** The Cate cat: sits, wags, blinks and every few seconds grooms itself (stepped, pixel-style). */
-export function CatSprite({ scale = 6 }: { scale?: number }) {
+/** Die Cate-Katze: sitzt, wedelt, blinzelt und putzt sich alle paar Sekunden (stufenweise, Pixel-Stil). Mit `walk` trabt sie auf der Stelle, z. B. als Ladeanzeige. */
+export function CatSprite({ scale = 6, walk = false }: { scale?: number; walk?: boolean }) {
   const ref = useRef<HTMLCanvasElement>(null);
   useEffect(() => {
     const cat = (globalThis as unknown as { CAT: Cat }).CAT;
@@ -31,6 +31,7 @@ export function CatSprite({ scale = 6 }: { scale?: number }) {
       const t = performance.now() - start, cycle = t % 12000;
       draw(
         reduced ? "sit"
+          : walk ? (Math.floor(t / 160) % 2 ? "walkB" : "walkA")
           : cycle > 6000 && cycle < 10000 ? (Math.floor(t / 320) % 2 ? "groomB" : "groomA")
           : t % 4200 > 4050 ? "sitBlink"
           : Math.floor(t / 700) % 3 === 0 ? "sitTail" : "sit"
@@ -39,6 +40,6 @@ export function CatSprite({ scale = 6 }: { scale?: number }) {
     tick();
     const id = reduced ? 0 : window.setInterval(tick, 80);
     return () => clearInterval(id);
-  }, []);
+  }, [walk]);
   return <canvas ref={ref} width={32} height={24} aria-hidden style={{ width: 32 * scale, height: 24 * scale, imageRendering: "pixelated" }} />;
 }
