@@ -186,6 +186,18 @@ export function App() {
     void reloadPlugins();
   }
 
+  async function handleUploadPlugin() {
+    const res = await window.harness.uploadCustomPlugin();
+    if (res.ok) void reloadPlugins();
+    return res;
+  }
+
+  async function handleRemoveCustomPlugin(id: string) {
+    const res = await window.harness.removeCustomPlugin(id);
+    if (res.ok) void reloadPlugins();
+    return res;
+  }
+
   useEffect(() => {
     void reloadPlugins();
     void window.harness.pluginsGetAppDataDir().then(setAppDataDir).catch(() => {});
@@ -882,6 +894,8 @@ export function App() {
         onToggle={(id, enabled) => void handlePluginToggle(id, enabled)}
         onConfigChange={(id, key, value) => void handlePluginConfig(id, key, value)}
         onInvoke={(id, op, args) => window.harness.pluginsInvoke(id, op, args, activeProject?.folder)}
+        onUpload={handleUploadPlugin}
+        onRemoveCustom={handleRemoveCustomPlugin}
       />
       <RaycastOverlay />
     </div>

@@ -27,6 +27,8 @@ import {
   IconPlay,
   IconPlugin,
   IconSearch,
+  IconTrash,
+  IconUpload,
   PluginGlyph
 } from "@/icons";
 import {
@@ -49,6 +51,10 @@ export interface PluginManagerProps {
   onToggle: (id: string, enabled: boolean) => void;
   onConfigChange: (id: string, key: string, value: unknown) => void;
   onInvoke: (id: string, op: string, args?: unknown) => Promise<unknown>;
+  /** Oeffnet den Datei-Dialog fuer eine eigene .js-Plugin-Datei; liefert das Ergebnis des Installationsversuchs. */
+  onUpload: () => Promise<{ ok: boolean; canceled?: boolean; message?: string; manifest?: { id: string; name: string; version: string } }>;
+  /** Entfernt ein zuvor hochgeladenes Plugin wieder (nur fuer plugin.custom === true). */
+  onRemoveCustom: (id: string) => Promise<{ ok: boolean; message?: string }>;
   /** Gespeicherte Konfiguration je Plugin-ID. Geheimnisse werden nie angezeigt. */
   config: Record<string, Record<string, unknown>>;
   open: boolean;
@@ -103,6 +109,11 @@ function PluginCard({ plugin, onOpen, onToggle }: { plugin: PluginInfo; onOpen: 
         <div className="flex items-center gap-2">
           <span className="font-mono text-[10px] text-muted-foreground">v{plugin.version}</span>
           <StatusDot status={status} withLabel />
+          {plugin.custom && (
+            <Badge variant="outline" className="rounded-sm px-1 py-0 text-[9px] font-normal text-muted-foreground">
+              Eigen
+            </Badge>
+          )}
         </div>
       </div>
       <p className="m-0 hidden min-w-0 flex-[2] truncate text-xs text-muted-foreground md:block" title={description}>{description}</p>
@@ -454,7 +465,8 @@ function PluginDetail({
   onBack,
   onToggle,
   onConfigChange,
-  onInvoke
+  onInvoke,
+  onRemoveCustom
 }: {
   plugin: PluginInfo;
   stored: Record<string, unknown>;
@@ -462,9 +474,23 @@ function PluginDetail({
   onToggle: PluginManagerProps["onToggle"];
   onConfigChange: PluginManagerProps["onConfigChange"];
   onInvoke: PluginManagerProps["onInvoke"];
+  onRemoveCustom: PluginManagerProps["onRemoveCustom"];
 }) {
   const { name, description } = resolveDisplay(plugin);
   const status = resolveStatus(plugin);
+  const [removing, setRemoving] = React.useState(false);
+
+  async function handleRemove() {
+    if (!window.confirm(`„${name}“ endgültig entfernen?`)) return;
+    setRemoving(true);
+    try {
+      const res = await onRemoveCustom(plugin.id);
+      if (res.ok) onBack();
+    } finally {
+      setRemoving(false);
+    }
+  }
+
   return (
     <div className="flex min-h-0 flex-1 flex-col">
       <div className="flex items-center gap-3 border-b border-border/70 px-5 py-3">
@@ -486,6 +512,12 @@ function PluginDetail({
         <Badge variant="outline" className="rounded-sm px-1.5 py-0 text-[10px] font-normal text-muted-foreground">
           {categoryLabel(resolveCategory(plugin))}
         </Badge>
+        {plugin.custom && (
+          <Button type="button" variant="outline" size="sm" className="h-7 gap-1 px-2 text-xs text-destructive hover:text-destructive" disabled={removing} onClick={() => void handleRemove()}>
+            <IconTrash size={12} />
+            {removing ? "Entfernt …" : "Entfernen"}
+          </Button>
+        )}
         <Switch checked={plugin.enabled} onCheckedChange={(v) => onToggle(plugin.id, v)} aria-label={`${name} aktivieren`} />
       </div>
       <ScrollArea className="min-h-0 flex-1">
@@ -535,14 +567,35 @@ function PluginDetail({
 
 /* ------------------------------------------ Dialog ------------------------------------------ */
 
-export function PluginManager({ plugins, onToggle, onConfigChange, onInvoke, config, open, onOpenChange, initialPluginId }: PluginManagerProps) {
+export function PluginManager({ plugins, onToggle, onConfigChange, onInvoke, onUpload, onRemoveCustom, config, open, onOpenChange, initialPluginId }: PluginManagerProps) {
   const [query, setQuery] = React.useState("");
   const [category, setCategory] = React.useState<string>("all");
   const [selectedId, setSelectedId] = React.useState<string | null>(null);
+  const [uploading, setUploading] = React.useState(false);
+  const [uploadNotice, setUploadNotice] = React.useState<{ ok: boolean; text: string } | null>(null);
 
   React.useEffect(() => {
     if (open) setSelectedId(initialPluginId ?? null);
   }, [open, initialPluginId]);
+
+  async function handleUpload() {
+    setUploading(true);
+    setUploadNotice(null);
+    try {
+      const res = await onUpload();
+      if (res.canceled) return;
+      if (res.ok) {
+        setUploadNotice({ ok: true, text: `„${res.manifest?.name ?? res.manifest?.id}“ wurde hinzugefügt.` });
+        if (res.manifest?.id) setSelectedId(res.manifest.id);
+      } else {
+        setUploadNotice({ ok: false, text: res.message ?? "Plugin konnte nicht installiert werden." });
+      }
+    } catch (e) {
+      setUploadNotice({ ok: false, text: e instanceof Error ? e.message : "Plugin konnte nicht installiert werden." });
+    } finally {
+      setUploading(false);
+    }
+  }
 
   const filtered = React.useMemo(() => {
     const q = query.trim().toLowerCase();
@@ -578,9 +631,23 @@ export function PluginManager({ plugins, onToggle, onConfigChange, onInvoke, con
             <span className="font-mono text-[11px] text-muted-foreground">
               {activeCount} von {plugins.length} aktiv
             </span>
+            <Button type="button" variant="outline" size="sm" className="ml-auto h-7 gap-1.5 px-2.5 text-xs" disabled={uploading} onClick={() => void handleUpload()}>
+              <IconUpload size={12} />
+              {uploading ? "Lädt hoch …" : "Eigenes Plugin hochladen"}
+            </Button>
           </div>
-          <DialogDescription className="text-xs">Plugins aktivieren, konfigurieren und testen.</DialogDescription>
+          <DialogDescription className="text-xs">
+            Plugins aktivieren, konfigurieren und testen. Eigene Plugins sind einzelne .js-Dateien nach dem Muster in{" "}
+            <code className="font-mono">electron/plugins/*.ts</code> (<code className="font-mono">module.exports = {"{"} manifest, operations {"}"}</code>) —
+            sie laufen mit vollen Systemrechten, nur Dateien hochladen, denen vertraut wird.
+          </DialogDescription>
         </DialogHeader>
+        {uploadNotice && (
+          <Alert variant={uploadNotice.ok ? "default" : "destructive"} className="mx-5 mt-3 py-2.5">
+            <span className="absolute left-4 top-3.5">{uploadNotice.ok ? <IconCheckCircle size={14} /> : <IconAlertCircle size={14} />}</span>
+            <AlertDescription className="text-xs">{uploadNotice.text}</AlertDescription>
+          </Alert>
+        )}
 
         {selected ? (
           <PluginDetail
@@ -590,6 +657,7 @@ export function PluginManager({ plugins, onToggle, onConfigChange, onInvoke, con
             onToggle={onToggle}
             onConfigChange={onConfigChange}
             onInvoke={onInvoke}
+            onRemoveCustom={onRemoveCustom}
           />
         ) : (
           <div className="flex min-h-0 flex-1 flex-col">

@@ -266,6 +266,8 @@ export interface HarnessApi {
   pluginsGetConfig(): Promise<Record<string, Record<string, unknown>>>;
   pluginsGetAppDataDir(): Promise<string>;
   pluginsInvoke(id: string, op: string, args?: unknown, projectRoot?: string): Promise<any>;
+  uploadCustomPlugin(): Promise<{ ok: boolean; canceled?: boolean; message?: string; manifest?: { id: string; name: string; version: string } }>;
+  removeCustomPlugin(id: string): Promise<{ ok: boolean; message?: string }>;
   getAgentDefaults(): Promise<{ defaultPresetId: string; defaultModel: string | null }>;
   listLocalModels(endpoint?: string): Promise<{ ok: boolean; models: string[]; message?: string }>;
   getAgentConfig(): Promise<{

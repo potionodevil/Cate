@@ -524,7 +524,7 @@ app.whenReady().then(async () => {
     }
   });
   ipcMain.handle("plugins:manifests", () => listPluginManifests());
-  // Plugin-Host (19 Backend-Plugins): Aktivierung, Konfiguration, Dispatcher.
+  // Plugin-Host (20 Backend-Plugins): Aktivierung, Konfiguration, Dispatcher.
   const pluginHost = getDefaultPluginHost();
   ipcMain.handle("plugins:list", () => pluginHost.listPlugins());
   ipcMain.handle("plugins:setEnabled", (_e, { id, enabled }: { id: string; enabled: boolean }) => pluginHost.setEnabled(id, !!enabled));
@@ -536,6 +536,31 @@ app.whenReady().then(async () => {
     (_e, { id, op, args, projectRoot }: { id: string; op: string; args?: unknown; projectRoot?: string }) =>
       pluginHost.invoke(id, op, args, { projectRoot })
   );
+  // Eigene Plugins (Einstellungen > Plugins > Hochladen): Dateiauswahl im Main-Prozess,
+  // Validierung/Kopieren/Reload uebernimmt der Host (electron/customPlugins.ts).
+  ipcMain.handle("plugins:uploadCustom", async () => {
+    const picked = await dialog.showOpenDialog(win, {
+      title: "Eigenes Plugin hochladen",
+      properties: ["openFile"],
+      filters: [{ name: "Cate-Plugin (JavaScript)", extensions: ["js"] }]
+    });
+    if (picked.canceled || picked.filePaths.length === 0) return { ok: false, canceled: true };
+    return pluginHost.installCustomPlugin(picked.filePaths[0]);
+  });
+  ipcMain.handle("plugins:removeCustom", (_e, { id }: { id: string }) => pluginHost.removeCustomPlugin(id));
+  // GitGuard-Scheduler: unabhaengig vom Fenster alle 60s angestossen. Der Plugin-Host
+  // prueft "enabled" selbst (Opt-in, da Commit+Push eingreifend sind); pro Projekt
+  // entscheidet das Plugin anhand des gespeicherten Intervalls, ob wirklich etwas laeuft.
+  setInterval(() => {
+    try {
+      const projects = loadState().projects ?? [];
+      const known = projects.filter((p) => p.folder && existsSync(p.folder)).map((p) => ({ id: p.id, name: p.name, folder: p.folder }));
+      if (known.length === 0) return;
+      void pluginHost.invoke("gitGuard", "tick", { projects: known });
+    } catch {
+      /* naechster Tick versucht es erneut */
+    }
+  }, 60_000).unref();
   // Ereignis "sessionEnded": SessionManager hat keinen Emitter (Datei gehoert dem
   // Session-Restore-Strang), daher wird finalizeSession hier minimal umhuellt.
   try {

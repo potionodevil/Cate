@@ -229,6 +229,9 @@ export interface HarnessApi {
   pluginsGetConfig(): Promise<Record<string, Record<string, unknown>>>;
   pluginsGetAppDataDir(): Promise<string>;
   pluginsInvoke(id: string, op: string, args?: unknown, projectRoot?: string): Promise<any>;
+  /** Oeffnet einen Dateiauswahl-Dialog fuer eine selbstgeschriebene .js-Plugin-Datei und installiert sie bei Erfolg. */
+  uploadCustomPlugin(): Promise<{ ok: boolean; canceled?: boolean; message?: string; manifest?: { id: string; name: string; version: string } }>;
+  removeCustomPlugin(id: string): Promise<{ ok: boolean; message?: string }>;
   getAgentDefaults(): Promise<{ defaultPresetId: string; defaultModel: string | null }>;
   listLocalModels(endpoint?: string): Promise<{ ok: boolean; models: string[]; message?: string }>;
   getAgentConfig(): Promise<{
@@ -389,6 +392,8 @@ const api: HarnessApi = {
   pluginsGetConfig: () => ipcRenderer.invoke("plugins:getConfig"),
   pluginsGetAppDataDir: () => ipcRenderer.invoke("plugins:getAppDataDir"),
   pluginsInvoke: (id, op, args, projectRoot) => ipcRenderer.invoke("plugins:invoke", { id, op, args, projectRoot }),
+  uploadCustomPlugin: () => ipcRenderer.invoke("plugins:uploadCustom"),
+  removeCustomPlugin: (id) => ipcRenderer.invoke("plugins:removeCustom", { id }),
   onPluginShortcut: (cb: () => void) => {
     const listener = () => cb();
     ipcRenderer.on("plugins:shortcut", listener);

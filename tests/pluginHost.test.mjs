@@ -18,11 +18,11 @@ function mk(extra = {}) {
   return { dir, stateFile, host, again: () => createPluginHost({ stateFile, appDataDir: dir, crypto: fakeCrypto, ...extra }) };
 }
 
-test("all 19 modules are listed with defaults", () => {
+test("all 20 modules are listed with defaults", () => {
   const { host, dir } = mk();
   const list = host.listPlugins();
-  assert.equal(list.length, 19);
-  assert.equal(PLUGIN_MODULES.length, 19);
+  assert.equal(list.length, 20);
+  assert.equal(PLUGIN_MODULES.length, 20);
   const on = list.filter((p) => p.enabled).map((p) => p.id).sort();
   assert.deepEqual(on, ["commandPolicy", "gitDiff", "gitTimeline", "secretGuard", "vramThrottle"]);
   for (const p of list) assert.ok(p.operations.length > 0, p.id);

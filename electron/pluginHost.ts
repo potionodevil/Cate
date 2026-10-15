@@ -30,6 +30,13 @@ import * as contractGuard from "./plugins/contractGuard";
 import * as dexFeed from "./plugins/dexFeed";
 import * as visualDiff from "./plugins/visualDiff";
 import * as voiceBridge from "./plugins/voiceBridge";
+import * as gitGuard from "./plugins/gitGuard";
+import {
+  installCustomPlugin as installCustomPluginFile,
+  removeCustomPlugin as removeCustomPluginFile,
+  loadAllCustomPlugins,
+  type CustomPluginIssue
+} from "./customPlugins";
 
 export type PluginOp = (args: any) => Promise<unknown>;
 
@@ -69,6 +76,8 @@ export interface HostPluginInfo {
   enabled: boolean;
   status: "active" | "inactive" | "error";
   statusMessage?: string;
+  /** true fuer selbst hochgeladene Plugins (Einstellungen > Plugins > Hochladen); nur diese lassen sich entfernen. */
+  custom?: boolean;
 }
 
 export type HostResult = { ok: true; [k: string]: unknown } | { ok: false; message: string };
@@ -89,13 +98,14 @@ const DEFAULT_CATEGORY: Record<string, string> = {
   vramThrottle: "hardware",
   sessionTeleport: "context",
   codeRag: "context",
-  vulnScanner: "security"
+  vulnScanner: "security",
+  gitGuard: "workflow"
 };
 
-/** Statische Importtabelle aller 19 Plugin-Module. */
+/** Statische Importtabelle aller 20 Plugin-Module. */
 export const PLUGIN_MODULES: PluginModule[] = [
   astRefactor, testHealer, vulnScanner, codeRag, gitTimeline, gitDiff, notifier, taskSync, prReviewer, vramThrottle,
-  sessionTeleport, commandPolicy, secretGuard, agentRouter, peerReview, contractGuard, dexFeed, visualDiff, voiceBridge
+  sessionTeleport, commandPolicy, secretGuard, agentRouter, peerReview, contractGuard, dexFeed, visualDiff, voiceBridge, gitGuard
 ] as unknown as PluginModule[];
 
 export interface SecretCrypto {
@@ -122,6 +132,8 @@ export interface PluginHostOptions {
   appDataDir: string;
   crypto?: SecretCrypto | null;
   modules?: PluginModule[];
+  /** Ordner mit hochgeladenen *.js-Plugins (siehe electron/customPlugins.ts). Ohne Angabe ist Hochladen deaktiviert. */
+  customDir?: string;
 }
 
 export interface InvokeContext {
@@ -180,11 +192,23 @@ function coerce(field: PluginConfigFieldInfo, value: unknown): unknown {
 }
 
 export function createPluginHost(opts: PluginHostOptions) {
-  const modules = opts.modules ?? PLUGIN_MODULES;
-  const byId = new Map<string, PluginModule>(modules.map((m) => [m.manifest.id, m]));
+  const staticModules = opts.modules ?? PLUGIN_MODULES;
+  const builtinIds = new Set(staticModules.map((m) => m.manifest.id));
+  let customModules: PluginModule[] = [];
+  let customIssues: CustomPluginIssue[] = [];
+  const byId = new Map<string, PluginModule>();
   const crypto = opts.crypto ?? null;
   let state: PluginState | null = null;
   const lastError = new Map<string, string>();
+
+  function allModules(): PluginModule[] {
+    return [...staticModules, ...customModules];
+  }
+
+  function rebuildById(): void {
+    byId.clear();
+    for (const m of allModules()) byId.set(m.manifest.id, m);
+  }
 
   function load(): PluginState {
     if (state) return state;
@@ -254,7 +278,7 @@ export function createPluginHost(opts: PluginHostOptions) {
   }
 
   function listPlugins(): HostPluginInfo[] {
-    return modules.map((mod) => {
+    return allModules().map((mod) => {
       const m = mod.manifest;
       const enabled = isEnabled(m.id);
       const err = lastError.get(m.id);
@@ -268,7 +292,8 @@ export function createPluginHost(opts: PluginHostOptions) {
         operations: Object.keys(mod.operations),
         enabled,
         status: err ? "error" : enabled ? "active" : "inactive",
-        ...(err ? { statusMessage: err } : {})
+        ...(err ? { statusMessage: err } : {}),
+        ...(builtinIds.has(m.id) ? {} : { custom: true })
       };
     });
   }
@@ -276,7 +301,7 @@ export function createPluginHost(opts: PluginHostOptions) {
   /** Nur nicht-geheime Werte; Geheimnisse erscheinen nur als Marker, wenn gesetzt. */
   function getConfig(): Record<string, Record<string, unknown>> {
     const out: Record<string, Record<string, unknown>> = {};
-    for (const mod of modules) {
+    for (const mod of allModules()) {
       const id = mod.manifest.id;
       const cfg: Record<string, unknown> = {};
       for (const f of fieldsOf(mod)) {
@@ -393,7 +418,71 @@ export function createPluginHost(opts: PluginHostOptions) {
     }
   }
 
-  return { listPlugins, invoke, setEnabled, setConfig, getConfig, isEnabled, emit, appDataDir: opts.appDataDir };
+  /** Scannt opts.customDir neu (frisches require je Datei) und ersetzt die Liste der eigenen Plugins. */
+  function reloadCustomPlugins(): { ok: true; loaded: number; issues: CustomPluginIssue[] } {
+    if (!opts.customDir) {
+      customModules = [];
+      customIssues = [];
+      rebuildById();
+      return { ok: true, loaded: 0, issues: [] };
+    }
+    const { modules: loaded, issues } = loadAllCustomPlugins(opts.customDir, builtinIds);
+    customModules = loaded.map(({ fileName: _f, ...m }) => m) as unknown as PluginModule[];
+    customIssues = issues;
+    rebuildById();
+    return { ok: true, loaded: customModules.length, issues };
+  }
+
+  /** Prueft und kopiert eine hochgeladene .js-Datei nach customDir, laedt danach alle eigenen Plugins neu. */
+  function installCustomPlugin(sourceFilePath: string): HostResult {
+    if (!opts.customDir) return { ok: false, message: "Kein Ordner für eigene Plugins konfiguriert." };
+    const res = installCustomPluginFile(opts.customDir, sourceFilePath, builtinIds);
+    if (!res.ok) return { ok: false, message: res.message ?? "Plugin konnte nicht installiert werden." };
+    reloadCustomPlugins();
+    return { ok: true, manifest: res.manifest };
+  }
+
+  /** Entfernt ein eigenes Plugin samt Zustand (Schalter/Konfiguration/Geheimnisse). Eingebaute Plugins sind tabu. */
+  function removeCustomPlugin(id: string): HostResult {
+    if (!opts.customDir) return { ok: false, message: "Kein Ordner für eigene Plugins konfiguriert." };
+    if (builtinIds.has(id)) return { ok: false, message: "Eingebaute Plugins können nicht entfernt werden." };
+    const res = removeCustomPluginFile(opts.customDir, id);
+    if (!res.ok) return { ok: false, message: res.message ?? "Entfernen fehlgeschlagen." };
+    try {
+      const st = load();
+      delete st.enabled[id];
+      delete st.config[id];
+      delete st.secrets[id];
+      lastError.delete(id);
+      save();
+    } catch {
+      /* Zustand war ggf. ohnehin leer */
+    }
+    reloadCustomPlugins();
+    return { ok: true };
+  }
+
+  function listCustomIssues(): CustomPluginIssue[] {
+    return customIssues;
+  }
+
+  rebuildById();
+  reloadCustomPlugins();
+
+  return {
+    listPlugins,
+    invoke,
+    setEnabled,
+    setConfig,
+    getConfig,
+    isEnabled,
+    emit,
+    installCustomPlugin,
+    removeCustomPlugin,
+    reloadCustomPlugins,
+    listCustomIssues,
+    appDataDir: opts.appDataDir
+  };
 }
 
 export type PluginHost = ReturnType<typeof createPluginHost>;
@@ -417,6 +506,6 @@ export function getDefaultPluginHost(): PluginHost {
     encrypt: (plain) => safeStorage.encryptString(plain).toString("base64"),
     decrypt: (b64) => safeStorage.decryptString(Buffer.from(b64, "base64"))
   };
-  defaultHost = createPluginHost({ stateFile: join(dir, "plugins-state.json"), appDataDir: dir, crypto });
+  defaultHost = createPluginHost({ stateFile: join(dir, "plugins-state.json"), appDataDir: dir, crypto, customDir: join(dir, "custom-plugins") });
   return defaultHost;
 }

@@ -106,6 +106,15 @@ export function IconTrash({ size = 14 }: IconProps) {
   );
 }
 
+/** Hochladen: Pfeil nach oben über einer Ablage (eigene Plugin-Datei hinzufügen). */
+export function IconUpload({ size = 14 }: IconProps) {
+  return (
+    <svg width={size} height={size} {...base}>
+      <path d="M10 13V4M6.5 7.5L10 4l3.5 3.5M4.5 13v2.2c0 .5.4.9.9.9h9.2c.5 0 .9-.4.9-.9V13" />
+    </svg>
+  );
+}
+
 /** Archivieren: Box mit nach unten zeigendem Pfeil (rein ins Archiv). */
 export function IconArchiveDown({ size = 14 }: IconProps) {
   return (
