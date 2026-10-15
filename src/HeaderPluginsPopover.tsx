@@ -84,7 +84,7 @@ export function HeaderPluginsPopover({ activeProjectId, onManage }: HeaderPlugin
                 />
                 <Switch
                   checked={plugin.enabled}
-                  onCheckedChange={(enabled) => pluginRegistry.setEnabled(plugin.id, enabled)}
+                  onCheckedChange={(enabled) => pluginRegistry.requestToggle(plugin.id, enabled)}
                   aria-label={`${plugin.name} aktivieren`}
                 />
               </div>

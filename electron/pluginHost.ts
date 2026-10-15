@@ -195,7 +195,17 @@ export function createPluginHost(opts: PluginHostOptions) {
         config: parsed.config && typeof parsed.config === "object" ? parsed.config : {},
         secrets: parsed.secrets && typeof parsed.secrets === "object" ? parsed.secrets : {}
       };
-    } catch {
+    } catch (e) {
+      // Fehlende Datei = erster Start. Eine vorhandene, aber unlesbare Datei wird gesichert, statt
+      // beim naechsten save() stillschweigend alle Schalter auf die Defaults zurueckzusetzen.
+      if (existsSync(opts.stateFile)) {
+        try {
+          renameSync(opts.stateFile, `${opts.stateFile}.corrupt-${Date.now()}`);
+        } catch {
+          /* best effort */
+        }
+        console.warn(`[plugins] ${opts.stateFile} unlesbar (${errMsg(e)}), Sicherung angelegt.`);
+      }
       state = emptyState();
     }
     return state;

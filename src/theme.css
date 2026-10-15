@@ -746,7 +746,6 @@ body,
 
 .hh-project-item:hover {
   background: var(--bg-hover);
-  transform: translateX(2px);
 }
 
 /* Active row stays itself while hovering — Linear/VSC style: no fill swap
@@ -2218,13 +2217,16 @@ button[class*="bg-primary"]:not([role="switch"]), .hh-btn-primary {
   clip-path: var(--px-corner-sm);
   border-radius: 0 !important;
   box-shadow: inset 0 -3px 0 rgba(0, 0, 0, 0.28), inset 0 2px 0 rgba(255, 255, 255, 0.3) !important;
-  transition: transform 150ms var(--ease-standard), filter 150ms;
+  transition: filter 150ms;
 }
-button[class*="bg-primary"]:not([role="switch"]):hover:not(:disabled), .hh-btn-primary:hover:not(:disabled) { transform: translateY(-1px); filter: brightness(1.08); }
-button[class*="bg-primary"]:not([role="switch"]):active:not(:disabled), .hh-btn-primary:active:not(:disabled) { transform: translateY(1px); }
+button[class*="bg-primary"]:not([role="switch"]):hover:not(:disabled), .hh-btn-primary:hover:not(:disabled) { filter: brightness(1.12); }
+button[class*="bg-primary"]:not([role="switch"]):active:not(:disabled), .hh-btn-primary:active:not(:disabled) { filter: brightness(0.94); }
 .hh-row, .hh-session-row, .hh-plugin-row, .hh-sidebar-kbd, .hh-count-chip, .hh-status-chip, .hh-topbar-git, .hh-seg, .hh-seg button, [role="tab"], [role="tablist"], input, .hh-sidebar-dock-button { border-radius: 0 !important; clip-path: var(--px-corner-sm); }
-.hh-row, .hh-session-row { transition: background 150ms, transform 150ms var(--ease-standard); }
-.hh-row:hover, .hh-session-row:hover { transform: translateX(2px); }
+.hh-row, .hh-session-row { transition: background 150ms; }
+.hh-row:hover, .hh-session-row:hover { background: var(--bg-hover); }
+/* Klickbare Elemente: Pointer-Cursor; Topbar-Controls nie im Drag-Bereich */
+button:not(:disabled), [role="button"]:not(:disabled) { cursor: pointer; }
+.hh-topbar button, .hh-topbar [role="button"], .hh-topbar input, .hh-topbar a { -webkit-app-region: no-drag; }
 .hh-status-chip.is-wait { color: #2a1d00; background: var(--warning); border-color: transparent; }
 
 /* --- Schrift: Pixel überall, VT323 für Zahlen und Kürzel --- */
@@ -2322,3 +2324,13 @@ html[data-hh-motion="off"] .hh-session-row[data-working]::after { animation: non
 @media (prefers-reduced-motion: reduce) { .hh-subagent, .hh-subagent-line { animation: none; } }
 .hh-subagent-row { display: flex; align-items: center; gap: 8px; width: calc(100% - 22px); margin: 1px 0 1px 22px; padding: 4px 8px; border: 0; background: none; text-align: left; font-size: 12px; color: var(--text-secondary); cursor: pointer; }
 .hh-subagent-row:hover { color: var(--text-primary); }
+
+/* Agent-Loop: Rückfragen-Karten und Auswahl-Chips (Pixel-Glas wie .hh-attach-btn) */
+.hh-loop-q { display: flex; flex-direction: column; gap: 6px; padding: 10px 12px; background: color-mix(in srgb, var(--accent) 7%, var(--bg-elevated-2)); border: 1px solid var(--border); clip-path: var(--px-corner-sm); }
+.hh-loop-q-head { display: flex; align-items: center; gap: 8px; color: var(--text-primary); font: 600 13px var(--font-sans); }
+.hh-loop-q-n { display: inline-grid; place-items: center; width: 18px; height: 18px; background: var(--accent); color: var(--accent-ink); font: 700 10px var(--font-mono); clip-path: var(--px-corner-sm); }
+.hh-loop-q-hint { color: var(--text-muted); font: 400 12px var(--font-sans); }
+.hh-loop-chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.hh-loop-chip { border: 1px solid var(--border-strong); background: var(--bg-primary); color: var(--text-secondary); font: 500 12px var(--font-sans); padding: 4px 10px; cursor: pointer; clip-path: var(--px-corner-sm); transition: background 150ms, color 150ms; }
+.hh-loop-chip:hover { color: var(--text-primary); background: var(--bg-hover); }
+.hh-loop-chip.is-on { background: color-mix(in srgb, var(--accent) 22%, transparent); border-color: var(--accent); color: var(--text-primary); }

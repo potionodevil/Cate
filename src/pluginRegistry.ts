@@ -86,6 +86,7 @@ export class PluginRegistry {
   private readonly plugins = new Map<string, PluginDefinition>();
   private readonly disabled = new Set<string>();
   private readonly listeners = new Set<() => void>();
+  private toggleHandler: ((pluginId: string, enabled: boolean) => void) | null = null;
   private readonly defaultNotification: PluginNotification = {
     id: "harness.session-finished",
     label: "Sitzungsabschluss melden",
@@ -113,7 +114,8 @@ export class PluginRegistry {
   }
 
   unregister(pluginId: string): void {
-    this.disabled.delete(pluginId);
+    // `disabled` bleibt absichtlich erhalten: ein erneutes register() (z. B. React-Effekt-Neustart)
+    // darf einen ausgeschalteten Schalter nicht stillschweigend wieder einschalten.
     if (this.plugins.delete(pluginId)) this.emit();
   }
 
@@ -129,6 +131,17 @@ export class PluginRegistry {
     if (enabled) this.disabled.delete(pluginId);
     else this.disabled.add(pluginId);
     this.emit();
+  }
+
+  /** Schalter-Wunsch des Nutzers (Popover, Dock). Der Host ist die Quelle der Wahrheit:
+   * mit Handler wird nur dieser gerufen, ohne Handler direkt lokal umgeschaltet. */
+  requestToggle(pluginId: string, enabled: boolean): void {
+    if (this.toggleHandler) this.toggleHandler(pluginId, enabled);
+    else this.setEnabled(pluginId, enabled);
+  }
+
+  setToggleHandler(handler: ((pluginId: string, enabled: boolean) => void) | null): void {
+    this.toggleHandler = handler;
   }
 
   isEnabled(pluginId: string): boolean {

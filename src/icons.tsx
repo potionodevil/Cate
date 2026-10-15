@@ -358,3 +358,11 @@ export function PluginGlyph({ name, size = 16 }: { name?: string; size?: number 
     </svg>
   );
 }
+
+export function IconLoop({ size = 14 }: IconProps) {
+  return (
+    <svg width={size} height={size} {...base}>
+      <path d="M4 9V8a3 3 0 0 1 3-3h8M13 2.5 15.5 5 13 7.5M16 11v1a3 3 0 0 1-3 3H5M7 17.5 4.5 15 7 12.5" />
+    </svg>
+  );
+}

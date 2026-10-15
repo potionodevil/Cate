@@ -18,6 +18,7 @@ import { LogoMark } from "./icons";
 import { openSubagent, useSubagents } from "./subagentStore";
 import { StatusGlyph, type GlyphState } from "./StatusGlyph";
 import { PowerContextMenu } from "./PowerContextMenu";
+import { AgentLoopButton } from "./AgentLoopButton";
 
 const STATUS_COLOR: Record<SessionRecord["status"], string> = {
   running: "var(--session-live)",
@@ -487,6 +488,7 @@ export function ProjectSidebar({
                               title={s.status === "running" ? "Läuft" : "Gestoppt – Klick öffnet und stellt den Kontext wieder her"}
                             />
                             <span className={cn("min-w-0 flex-1 truncate text-[11px]", s.status === "running" ? "text-[var(--text-secondary)]" : "text-[var(--text-muted)]")}>{s.name}</span>
+                            <AgentLoopButton sessionId={s.id} name={s.name} live={s.status === "running"} presetId={s.presetId} />
                             <Button
                               type="button"
                               size="icon"

@@ -16,7 +16,7 @@ export interface SubagentInfo {
   startedAt: number;
   updatedAt: number;
   done: boolean;
-  /** Claude: Pfad zur .jsonl; Hermes: Session-ID in state.db. */
+  /** Claude: Pfad zur .jsonl; Hermes: \"<profil>|<sessionId>\". */
   ref: string;
 }
 
@@ -46,8 +46,37 @@ function claudeProjectDir(folder: string): string {
   return join(os.homedir(), ".claude", "projects", folder.replace(/[^a-zA-Z0-9]/g, "-"));
 }
 
-function hermesDbPath(): string {
-  return join(process.env.LOCALAPPDATA ?? join(os.homedir(), "AppData", "Local"), "hermes", "state.db");
+/** Pfad der state.db eines Hermes-Profils: leer/„default“ → Basis-state.db, sonst profiles/<profil>/state.db. */
+export function hermesDbPath(profile?: string | null, localAppData?: string): string {
+  const base = join(localAppData ?? process.env.LOCALAPPDATA ?? join(os.homedir(), "AppData", "Local"), "hermes");
+  const p = (profile ?? "").trim();
+  return !p || p === "default" ? join(base, "state.db") : join(base, "profiles", p, "state.db");
+}
+
+/** ref für Hermes-Subagenten: "<profil>|<sessionId>". */
+export function encodeHermesRef(profile: string, sessionId: string): string {
+  return `${profile || "default"}|${sessionId}`;
+}
+export function decodeHermesRef(ref: string): { profile: string; sessionId: string } {
+  const i = ref.indexOf("|");
+  return i < 0 ? { profile: "default", sessionId: ref } : { profile: ref.slice(0, i), sessionId: ref.slice(i + 1) };
+}
+
+/** Gruppiert Projekte nach Hermes-Profil (leer → "default"); erstes Projekt je Profil gewinnt. */
+export function projectsByHermesProfile(projects: ProjectLike[]): Map<string, string> {
+  const m = new Map<string, string>();
+  for (const p of projects) {
+    const key = (p.hermesProfile ?? "").trim() || "default";
+    if (!m.has(key)) m.set(key, p.id);
+  }
+  return m;
+}
+
+const warned = new Set<string>();
+function warnOnce(key: string, err: unknown): void {
+  if (warned.has(key)) return;
+  warned.add(key);
+  console.warn(`[subagents] ${key}:`, err);
 }
 
 /** Ein Subagent gilt als fertig, wenn er seit 25 s nichts mehr geschrieben hat — die Protokolle haben kein verlässliches „Ende“-Signal. */
@@ -87,38 +116,40 @@ function scanClaude(project: ProjectLike, since: number, now: number): SubagentI
   return out;
 }
 
-/** Findet Hermes-Unter-Sessions (parent_session_id gesetzt) im Profil des Projekts, seit `since` gestartet. */
+/** Findet Hermes-Unter-Sessions (parent_session_id gesetzt) je Profil-DB der Projekte, seit `since` gestartet. */
 function scanHermes(projects: ProjectLike[], since: number): SubagentInfo[] {
   const Db = loadDatabase();
-  const path = hermesDbPath();
-  if (!Db || !existsSync(path)) return [];
-  const byProfile = new Map(projects.map((p) => [p.hermesProfile, p.id]));
-  let db: any;
-  try {
-    db = new Db(path, { readonly: true, fileMustExist: true });
-    const rows = db
-      .prepare("SELECT id, title, profile_name, started_at, ended_at, last_activity_at FROM sessions WHERE parent_session_id IS NOT NULL AND started_at >= ?")
-      .all(since / 1000) as { id: string; title: string | null; profile_name: string | null; started_at: number; ended_at: number | null; last_activity_at: number | null }[];
-    return rows.flatMap((r) => {
-      const projectId = r.profile_name ? byProfile.get(r.profile_name) : undefined;
-      if (!projectId) return [];
-      return [{
-        id: `hermes:${r.id}`,
-        source: "hermes" as const,
-        projectId,
-        title: (r.title ?? "Subagent").replace(/^Subagent:\s*/, ""),
-        agentType: null,
-        startedAt: r.started_at * 1000,
-        updatedAt: (r.last_activity_at ?? r.ended_at ?? r.started_at) * 1000,
-        done: r.ended_at != null,
-        ref: r.id
-      }];
-    });
-  } catch {
-    return [];
-  } finally {
-    try { db?.close(); } catch { /* egal */ }
+  if (!Db) return [];
+  const out: SubagentInfo[] = [];
+  for (const [profile, projectId] of projectsByHermesProfile(projects)) {
+    const path = hermesDbPath(profile);
+    if (!existsSync(path)) continue;
+    let db: any;
+    try {
+      db = new Db(path, { readonly: true, fileMustExist: true });
+      const rows = db
+        .prepare("SELECT id, title, started_at, ended_at, last_activity_at FROM sessions WHERE parent_session_id IS NOT NULL AND started_at >= ?")
+        .all(since / 1000) as { id: string; title: string | null; started_at: number; ended_at: number | null; last_activity_at: number | null }[];
+      for (const r of rows) {
+        out.push({
+          id: `hermes:${profile}:${r.id}`,
+          source: "hermes",
+          projectId,
+          title: (r.title ?? "Subagent").replace(/^Subagent:\s*/, ""),
+          agentType: null,
+          startedAt: r.started_at * 1000,
+          updatedAt: (r.last_activity_at ?? r.ended_at ?? r.started_at) * 1000,
+          done: r.ended_at != null,
+          ref: encodeHermesRef(profile, r.id)
+        });
+      }
+    } catch (err) {
+      warnOnce(`Hermes-DB ${path}`, err);
+    } finally {
+      try { db?.close(); } catch { /* egal */ }
+    }
   }
+  return out;
 }
 
 /** Alle Subagenten der Projekte, die seit `since` (ms) gestartet sind, neueste zuerst. */
@@ -171,11 +202,13 @@ export function readSubagent(info: Pick<SubagentInfo, "source" | "ref">): Subage
     }
   } else {
     const Db = loadDatabase();
-    if (!Db || !existsSync(hermesDbPath())) return out;
+    const { profile, sessionId } = decodeHermesRef(info.ref);
+    const path = hermesDbPath(profile);
+    if (!Db || !existsSync(path)) return out;
     let db: any;
     try {
-      db = new Db(hermesDbPath(), { readonly: true, fileMustExist: true });
-      const rows = db.prepare("SELECT role, content, tool_calls FROM messages WHERE session_id = ? ORDER BY timestamp").all(info.ref) as { role: string; content: string | null; tool_calls: string | null }[];
+      db = new Db(path, { readonly: true, fileMustExist: true });
+      const rows = db.prepare("SELECT role, content, tool_calls FROM messages WHERE session_id = ? ORDER BY timestamp").all(sessionId) as { role: string; content: string | null; tool_calls: string | null }[];
       for (const r of rows) {
         if (r.role === "user" && r.content) out.push({ kind: out.length ? "text" : "task", text: r.content.trim() });
         else if (r.role === "assistant") {
@@ -189,7 +222,7 @@ export function readSubagent(info: Pick<SubagentInfo, "source" | "ref">): Subage
           } catch { /* keine Werkzeugaufrufe */ }
         } else if (r.role === "tool") out.push({ kind: "result", text: oneLine(r.content) || "(leer)" });
       }
-    } catch { /* Datenbank gesperrt o. Ä.: beim nächsten Abruf erneut */ } finally {
+    } catch (err) { warnOnce(`Hermes-DB ${path}`, err); } finally {
       try { db?.close(); } catch { /* egal */ }
     }
   }

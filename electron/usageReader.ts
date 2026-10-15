@@ -40,7 +40,9 @@ export interface SessionUsageRow {
 }
 
 function hermesHome(profile?: string): string {
-  const base = join(homedir(), ".hermes");
+  // Windows-Installation liegt unter %LOCALAPPDATA%\hermes (wie in hermesCli/subagents), sonst ~/.hermes.
+  const winBase = process.env.LOCALAPPDATA ? join(process.env.LOCALAPPDATA, "hermes") : "";
+  const base = winBase && existsSync(winBase) ? winBase : join(homedir(), ".hermes");
   if (!profile || profile === "default") return base;
   return join(base, "profiles", profile);
 }

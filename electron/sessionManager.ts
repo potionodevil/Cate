@@ -481,6 +481,11 @@ export class SessionManager {
     return session && { id: session.id, name: session.name, projectId: session.projectId };
   }
 
+  /** Arbeitsordner einer Session (fuer Pruefbefehle des Agent-Loops). */
+  sessionCwd(sessionId: string): string | null {
+    return this.sessions.get(sessionId)?.cwd ?? null;
+  }
+
   /** Running sessions across all projects, newest activity first. */
   runningSessions(): { id: string; name: string; projectId: string; lastActiveAt: number }[] {
     return [...this.sessions.values()]
@@ -767,7 +772,10 @@ export class SessionManager {
     const session = this.sessions.get(sessionId);
     const paneId = session?.paneIds.find((id) => this.pty.has(id));
     if (!paneId) return false;
-    this.pty.write(paneId, text.replace(/[\r\n]+/g, " ") + "\r");
+    // Text und Enter getrennt senden: TUIs (Claude Code, Codex ...) werten Text+Enter in einem Chunk
+    // als Paste und schicken nicht ab. Das Enter folgt kurz danach, solange das Pane noch lebt.
+    this.pty.write(paneId, text.replace(/[\r\n]+/g, " "));
+    setTimeout(() => { if (this.pty.has(paneId)) this.pty.write(paneId, "\r"); }, 200).unref?.();
     return true;
   }
 

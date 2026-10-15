@@ -6,6 +6,7 @@
 import { contextBridge, ipcRenderer, webUtils } from "electron";
 import type { AttachResult } from "./attachments";
 import type { SubagentInfo, SubagentLine } from "./subagents";
+import type { LoopInfo } from "./agentLoop";
 import type { ContextPayload, ContextResult } from "./contextCore";
 import type { HostPluginInfo } from "./pluginHost";
 import type { ProviderSkillsResult } from "./providerSkills";
@@ -195,6 +196,8 @@ export interface HarnessApi {
   }>;
   listAgentPresets(): Promise<unknown[]>;
   detectInstalledAgents(): Promise<{ id: string; label: string; installed: boolean }[]>;
+  integrationStatus(): Promise<{ agent: string; label: string; total: number; installed: number; foreign: number }[]>;
+  integrationInstall(agents: string[]): Promise<{ written: string[]; skipped: { path: string; reason: string }[] }>;
   providerSkills(presetId: string, opts?: { profile?: string; projectFolder?: string }): Promise<ProviderSkillsResult>;
   getUserName(): Promise<string | null>;
   setUserName(name: string): Promise<{ ok: boolean }>;
@@ -212,6 +215,10 @@ export interface HarnessApi {
   pathForFile(file: File): string;
   listSubagents(): Promise<SubagentInfo[]>;
   readSubagent(id: string): Promise<SubagentLine[]>;
+  loopStart(sessionId: string, goal: string, maxIterations: number, check?: string): Promise<{ ok: true; loop: LoopInfo } | { ok: false; message: string }>;
+  loopStop(sessionId: string): Promise<{ ok: boolean }>;
+  loopList(): Promise<LoopInfo[]>;
+  onLoopUpdate(cb: (info: LoopInfo) => void): () => void;
   onWindowMaximized(cb: (maximized: boolean) => void): () => void;
   closeWindow(): Promise<void>;
   listPluginManifests(): Promise<{ id: string; name: string; version: string; description?: string; slots?: ("action" | "sidebar" | "context")[] }[]>;
@@ -342,6 +349,8 @@ const api: HarnessApi = {
   codexUsage: (days) => ipcRenderer.invoke("usage:codex", { days }),
   listAgentPresets: () => ipcRenderer.invoke("agents:list"),
   detectInstalledAgents: () => ipcRenderer.invoke("agents:detectInstalled"),
+  integrationStatus: () => ipcRenderer.invoke("integration:status"),
+  integrationInstall: (agents) => ipcRenderer.invoke("integration:install", { agents }),
   providerSkills: (presetId, opts) => ipcRenderer.invoke("providers:skills", { presetId, ...(opts ?? {}) }),
   getUserName: () => ipcRenderer.invoke("settings:getUserName"),
   setUserName: (name) => ipcRenderer.invoke("settings:setUserName", { name }),
@@ -359,6 +368,14 @@ const api: HarnessApi = {
   pathForFile: (file) => webUtils.getPathForFile(file),
   listSubagents: () => ipcRenderer.invoke("subagents:list"),
   readSubagent: (id) => ipcRenderer.invoke("subagents:read", { id }),
+  loopStart: (sessionId, goal, maxIterations, check) => ipcRenderer.invoke("loop:start", { sessionId, goal, maxIterations, check }),
+  loopStop: (sessionId) => ipcRenderer.invoke("loop:stop", { sessionId }),
+  loopList: () => ipcRenderer.invoke("loop:list"),
+  onLoopUpdate: (cb) => {
+    const listener = (_e: Electron.IpcRendererEvent, info: LoopInfo) => cb(info);
+    ipcRenderer.on("loop:update", listener);
+    return () => ipcRenderer.removeListener("loop:update", listener);
+  },
   onWindowMaximized: (cb) => {
     const listener = (_e: Electron.IpcRendererEvent, maximized: boolean) => cb(maximized);
     ipcRenderer.on("window:maximized", listener);

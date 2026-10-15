@@ -66,6 +66,13 @@ Die Pixel-Katze und ihre Tiere entstehen aus `scripts/make-cat.py`
 Terminals laufen in einem eigenen Hintergrunddienst (`electron/ptyHost.ts`) und
 überleben daher App-Neustarts.
 
+## Agent-Loop und Agent-Befehle
+
+- **Loop starten:** Loop-Button in der Session-Zeile der Sidebar oder Rechtsklick > "Agent-Loop starten". Der Dialog fragt bei vagem Ziel, fehlendem Prüfbefehl oder mehr als 20 Durchläufen kurz nach. Shell-Sessions sind ausgenommen.
+- **Prüfbefehl:** läuft nach jedem Durchlauf im Session-Ordner; Exit 0 beendet den Loop, Fehlerausgaben gehen an den Agent zurück.
+- **Aus dem Agent heraus:** `node "$HH_SCRIPTS_DIR/hh-loop.cjs" start [--session <Name>] [--max N] [--check "<Befehl>"] "Ziel"`, dazu `stop` und `list`.
+- **Slash-Befehle:** Einstellungen > Verbindungen > Agent-Befehle installiert `/agentloop`, `/validate` und `/cate` für Claude Code (`~/.claude/commands`), Codex (`~/.codex/prompts`), OpenCode (`~/.config/opencode/command`) und Hermes (Skills je Projektprofil). Eigene Dateien ohne Cate-Markierung werden nicht überschrieben.
+
 ## Lizenz
 
 © 2026 R.S. Alle Rechte vorbehalten. Der Code ist geistiges Eigentum von R.S.;

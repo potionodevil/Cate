@@ -114,3 +114,24 @@ test("invoke injects config/appDataDir/projectRoot; explicit args win", async ()
   assert.equal(seen[1].config.tok, "abc");
   rmSync(dir, { recursive: true, force: true });
 });
+
+test("corrupt state file is backed up instead of silently resetting toggles", async () => {
+  const { writeFileSync, readdirSync } = await import("node:fs");
+  const { host, stateFile, dir, again } = mk();
+  host.setEnabled("notifier", true);
+  writeFileSync(stateFile, "{ kaputt", "utf8");
+  const fresh = again();
+  assert.equal(fresh.listPlugins().find((p) => p.id === "notifier").enabled, false);
+  assert.ok(readdirSync(dir).some((f) => f.includes(".corrupt-")));
+  rmSync(dir, { recursive: true, force: true });
+});
+
+test("enabled state survives a new host instance", () => {
+  const { host, dir, again } = mk();
+  host.setEnabled("notifier", true);
+  host.setEnabled("gitDiff", false);
+  const list = again().listPlugins();
+  assert.equal(list.find((p) => p.id === "notifier").enabled, true);
+  assert.equal(list.find((p) => p.id === "gitDiff").enabled, false);
+  rmSync(dir, { recursive: true, force: true });
+});
