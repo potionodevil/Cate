@@ -49,6 +49,7 @@ export function setupPet(win: BrowserWindow, sessions: SessionManager): { toggle
     skipTaskbar: true,
     alwaysOnTop: true,
     hasShadow: false,
+    minimizable: false,
     show: false,
     webPreferences: { preload: join(__dirname, "petPreload.js"), contextIsolation: true, nodeIntegration: false }
   });
@@ -56,6 +57,14 @@ export function setupPet(win: BrowserWindow, sessions: SessionManager): { toggle
   pet.setIgnoreMouseEvents(true, { forward: true });
   pet.loadFile(join(__dirname, "../assets/pet.html"));
   pet.once("ready-to-show", () => apply());
+  // Windows can still minimize a non-taskbar window via "Show desktop"/Win+D despite
+  // minimizable:false; the cat is a desktop overlay, never meant to be minimized, so
+  // undo it immediately instead of leaving the user wondering where it went.
+  pet.on("minimize", () => {
+    if (pet.isDestroyed()) return;
+    pet.restore();
+    if (settings.enabled) apply();
+  });
 
   /** Moves the window onto the target display. Windows applies the DPI of the display the window is *currently* on
    * to setBounds, so a hop between displays with different scaling lands wrong; a second call corrects it. */
@@ -72,6 +81,7 @@ export function setupPet(win: BrowserWindow, sessions: SessionManager): { toggle
     if (!settings.enabled) {
       pet.hide();
       syncCursor();
+      syncTopmost();
       return;
     }
     pet.setAlwaysOnTop(settings.alwaysOnTop, "screen-saver");
@@ -80,6 +90,7 @@ export function setupPet(win: BrowserWindow, sessions: SessionManager): { toggle
     if (!pet.isVisible()) pet.showInactive();
     pet.webContents.send("pet:settings", settings);
     syncCursor();
+    syncTopmost();
   }
 
   function displayList(): DisplayList {
@@ -115,6 +126,7 @@ export function setupPet(win: BrowserWindow, sessions: SessionManager): { toggle
   pet.once("closed", () => {
     clearTimeout(displayTimer);
     clearInterval(cursorTimer);
+    clearInterval(topmostTimer);
     screen.removeListener("display-added", onDisplaysChanged);
     screen.removeListener("display-removed", onDisplaysChanged);
     screen.removeListener("display-metrics-changed", onDisplaysChanged);
@@ -137,6 +149,26 @@ export function setupPet(win: BrowserWindow, sessions: SessionManager): { toggle
       lastCursor = key;
       pet.webContents.send("pet:cursor", msg);
     }, 150);
+  }
+
+  /**
+   * Watchdog against the cat "randomly" vanishing: on Windows, `setAlwaysOnTop(..., "screen-saver")`
+   * does not reliably stay on top forever — the taskbar, Start/Task View, notifications and other
+   * apps' own topmost windows can silently steal the z-order with no user-visible trigger, and the
+   * window only used to recover once the user reopened the pet settings (which re-runs `apply()`).
+   * Re-assert on a timer instead of only reacting to `notify()`/manual settings changes.
+   */
+  let topmostTimer: NodeJS.Timeout | undefined;
+  function syncTopmost(): void {
+    clearInterval(topmostTimer);
+    topmostTimer = undefined;
+    if (!settings.enabled || !settings.alwaysOnTop) return;
+    topmostTimer = setInterval(() => {
+      if (pet.isDestroyed()) return;
+      pet.setAlwaysOnTop(true, "screen-saver");
+      pet.moveTop();
+      if (!pet.isVisible()) pet.showInactive();
+    }, 4000);
   }
 
   /** Brings the cat in front of every other window; in automatic mode also onto the display the user is working on. */
