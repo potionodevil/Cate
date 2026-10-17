@@ -4,6 +4,7 @@
  * Nutzung ohne ausdrückliche schriftliche Erlaubnis von R.S. ist untersagt.
  */
 import { app, BrowserWindow, ipcMain, dialog, Menu, globalShortcut, Tray, nativeImage, powerMonitor, session as electronSession } from "electron";
+import { exec } from "child_process";
 import { join, dirname } from "path";
 import { existsSync, mkdirSync, readFileSync, writeFileSync, appendFileSync, unlinkSync, readdirSync } from "fs";
 import { homedir } from "os";
@@ -37,6 +38,8 @@ import { markOrphanedRunningSessions } from "./sessionStore";
 import { agentExtras, buildBanner, listLocalModels, CONNECTOR_CATALOG, type LocalModelConfig, type McpServer } from "./agentConfig";
 import { improvePrompt } from "./promptImprover";
 import { setupPet } from "./pet";
+import { AgentLoopManager } from "./agentLoop";
+import { loopProfileFor, installCommands, integrationStatus, INTEGRATION_AGENTS, type AgentKind, type InstallPaths } from "./agentIntegration";
 
 const isDev = process.env.NODE_ENV === "development";
 const sessionManager = new SessionManager();
@@ -191,7 +194,8 @@ function buildHermesSeedQuery(projectId: string, excludeSessionId: string, scrip
     `Andere Sessions dieses Projekts siehst/liest du mit: node "${scriptsDirPath}/hh-peers.cjs" list bzw. read <name>; ` +
     `Nachricht an eine Session: node "${scriptsDirPath}/hh-send.cjs" --to <name> "Text". ` +
     `Bei Bedarf kannst du ein weiteres getracktes Terminal-Pane oeffnen mit: ` +
-    `node "${scriptsDirPath}/hh-spawn.cjs" --label "<Name>" --preset shell --cwd .\n` +
+    `node "${scriptsDirPath}/hh-spawn.cjs" --label "<Name>" --preset shell --cwd . ` +
+    `Agent-Loop (Ziel iterativ abarbeiten): node "${scriptsDirPath}/hh-loop.cjs" start [--session <name>] [--max 5] "Ziel" | stop | list.\n` +
     (digest
       ? `Andere aktuell laufende Sessions in diesem Projekt:\n${digest}\n`
       : `Keine weiteren aktiven Sessions in diesem Projekt.\n`)
@@ -245,12 +249,39 @@ function writePeersFile(): void {
       }));
     }
     writeFileSync(join(dirname(spawnQueuePath()), "harness-peers.json"), JSON.stringify(out), "utf-8");
+    writeFileSync(join(dirname(spawnQueuePath()), "harness-loops.json"), JSON.stringify([...(agentLoopsRef?.list() ?? []), ...loopNotes]), "utf-8");
   } catch {
     /* best effort */
   }
 }
 
 const lastSend = new Map<string, number>();
+
+/** Set once the IPC layer created the manager; the agent-facing queue uses it. */
+let agentLoopsRef: AgentLoopManager | null = null;
+
+/** hh-loop.cjs request: start/stop an Agent-Loop for a session of the project. */
+/** Letzte abgelehnte hh-loop-Anfragen (sichtbar in `hh-loop.cjs list`, sonst bekommt der Agent nie einen Grund). */
+const loopNotes: { sessionId: string; state: "rejected"; iteration: 0; maxIterations: 0; goal: string; message: string }[] = [];
+function noteLoop(sessionId: string, goal: string, message: string): void {
+  loopNotes.push({ sessionId, state: "rejected", iteration: 0, maxIterations: 0, goal, message });
+  if (loopNotes.length > 5) loopNotes.shift();
+}
+
+function routeLoopRequest(req: { projectId: string; action?: string; session?: string; goal?: string; max?: number; check?: string }): void {
+  const mgr = agentLoopsRef;
+  const ref = req.session ?? "";
+  if (!mgr) return noteLoop(ref, req.goal ?? "", "App noch nicht bereit.");
+  const sessions = sessionManager.listSessions(req.projectId);
+  const target = sessions.find((s) => s.id === ref) ?? sessions.find((s) => s.name.toLowerCase() === ref.toLowerCase());
+  if (!target) return noteLoop(ref, req.goal ?? "", `Session "${ref}" nicht gefunden.`);
+  if (req.action === "stop") {
+    if (!mgr.stop(target.id)) noteLoop(target.id, "", "Kein laufender Loop zum Stoppen.");
+  } else if (req.action === "start") {
+    const res = mgr.start({ sessionId: target.id, goal: req.goal ?? "", maxIterations: req.max ?? 5, check: req.check });
+    if (!res.ok) noteLoop(target.id, req.goal ?? "", res.message);
+  }
+}
 
 /** Agent-to-agent message: typed into the target if it is live, otherwise
  * stored in its inbox and delivered on the next reattach. */
@@ -315,6 +346,10 @@ function startSpawnQueueWatcher(win: BrowserWindow): void {
       }
       if (req.type === "send") {
         routeSessionMessage(req.projectId, req.from ?? "", req.to ?? "", req.text ?? "");
+        continue;
+      }
+      if (req.type === "loop") {
+        routeLoopRequest(req as unknown as Parameters<typeof routeLoopRequest>[0]);
         continue;
       }
       const project = loadState().projects.find((p) => p.id === req.projectId);
@@ -489,7 +524,7 @@ app.whenReady().then(async () => {
     }
   });
   ipcMain.handle("plugins:manifests", () => listPluginManifests());
-  // Plugin-Host (19 Backend-Plugins): Aktivierung, Konfiguration, Dispatcher.
+  // Plugin-Host (20 Backend-Plugins): Aktivierung, Konfiguration, Dispatcher.
   const pluginHost = getDefaultPluginHost();
   ipcMain.handle("plugins:list", () => pluginHost.listPlugins());
   ipcMain.handle("plugins:setEnabled", (_e, { id, enabled }: { id: string; enabled: boolean }) => pluginHost.setEnabled(id, !!enabled));
@@ -501,6 +536,31 @@ app.whenReady().then(async () => {
     (_e, { id, op, args, projectRoot }: { id: string; op: string; args?: unknown; projectRoot?: string }) =>
       pluginHost.invoke(id, op, args, { projectRoot })
   );
+  // Eigene Plugins (Einstellungen > Plugins > Hochladen): Dateiauswahl im Main-Prozess,
+  // Validierung/Kopieren/Reload uebernimmt der Host (electron/customPlugins.ts).
+  ipcMain.handle("plugins:uploadCustom", async () => {
+    const picked = await dialog.showOpenDialog(win, {
+      title: "Eigenes Plugin hochladen",
+      properties: ["openFile"],
+      filters: [{ name: "Cate-Plugin (JavaScript)", extensions: ["js"] }]
+    });
+    if (picked.canceled || picked.filePaths.length === 0) return { ok: false, canceled: true };
+    return pluginHost.installCustomPlugin(picked.filePaths[0]);
+  });
+  ipcMain.handle("plugins:removeCustom", (_e, { id }: { id: string }) => pluginHost.removeCustomPlugin(id));
+  // GitGuard-Scheduler: unabhaengig vom Fenster alle 60s angestossen. Der Plugin-Host
+  // prueft "enabled" selbst (Opt-in, da Commit+Push eingreifend sind); pro Projekt
+  // entscheidet das Plugin anhand des gespeicherten Intervalls, ob wirklich etwas laeuft.
+  setInterval(() => {
+    try {
+      const projects = loadState().projects ?? [];
+      const known = projects.filter((p) => p.folder && existsSync(p.folder)).map((p) => ({ id: p.id, name: p.name, folder: p.folder }));
+      if (known.length === 0) return;
+      void pluginHost.invoke("gitGuard", "tick", { projects: known });
+    } catch {
+      /* naechster Tick versucht es erneut */
+    }
+  }, 60_000).unref();
   // Ereignis "sessionEnded": SessionManager hat keinen Emitter (Datei gehoert dem
   // Session-Restore-Strang), daher wird finalizeSession hier minimal umhuellt.
   try {
@@ -548,6 +608,42 @@ app.whenReady().then(async () => {
     const info = subagentIndex.get(id);
     return info ? readSubagent(info) : [];
   });
+  // Agent-Loop: Ziel in eine Session schreiben, nach Ruhephasen "Weiter" nachschieben.
+  const agentLoops = new AgentLoopManager({
+    write: (sessionId, text) => sessionManager.deliverToSession(sessionId, text),
+    lastActive: (sessionId) => sessionManager.runningSessions().find((s) => s.id === sessionId)?.lastActiveAt ?? null,
+    now: () => Date.now(),
+    profileFor: (sessionId) => {
+      const live = sessionManager.runningSessions().find((s) => s.id === sessionId);
+      const rec = live && sessionManager.listSessions(live.projectId).find((s) => s.id === sessionId);
+      return loopProfileFor(rec?.presetId ?? undefined);
+    },
+    runCheck: (command, sessionId) =>
+      new Promise((resolve) => {
+        const cwd = sessionManager.sessionCwd(sessionId) ?? undefined;
+        exec(command, { cwd, timeout: 300_000, windowsHide: true, maxBuffer: 1024 * 1024 }, (err, stdout, stderr) => {
+          const code = err ? (typeof (err as { code?: unknown }).code === "number" ? ((err as { code: number }).code) : null) : 0;
+          resolve({ code, output: `${stdout ?? ""}
+${stderr ?? ""}` });
+        });
+      }),
+    emit: (info) => { if (!win.isDestroyed() && !win.webContents.isDestroyed()) win.webContents.send("loop:update", info); }
+  });
+  agentLoopsRef = agentLoops;
+  setInterval(() => agentLoops.tick(), 1000).unref();
+  ipcMain.handle("loop:start", (_e, a: { sessionId: string; goal: string; maxIterations: number; check?: string }) => agentLoops.start(a));
+  // Agent-Integration: Slash-Befehle (/agentloop, /validate, /cate) je Agent installieren (nur auf Klick in den Einstellungen).
+  const integrationPaths = (): InstallPaths => ({
+    home: homedir(),
+    hermesHome: join(process.env.LOCALAPPDATA ?? join(homedir(), "AppData", "Local"), "hermes"),
+    hermesProfiles: [...new Set(loadState().projects.map((p) => p.hermesProfile).filter((p): p is string => !!p))]
+  });
+  ipcMain.handle("integration:status", () => integrationStatus(integrationPaths()));
+  ipcMain.handle("integration:install", (_e, { agents }: { agents: string[] }) =>
+    installCommands(INTEGRATION_AGENTS.map((a) => a.id).filter((id): id is AgentKind => agents.includes(id)), integrationPaths())
+  );
+  ipcMain.handle("loop:stop", (_e, { sessionId }: { sessionId: string }) => ({ ok: agentLoops.stop(sessionId) }));
+  ipcMain.handle("loop:list", () => agentLoops.list());
   ipcMain.handle("attach:pick", () => attachPickFiles(win));
   ipcMain.handle("attach:saveBytes", (_e, { name, data }: { name: string; data: Uint8Array }) => attachSaveBytes(name, data));
   ipcMain.handle("context:readClipboard", () => readClipboardContext());

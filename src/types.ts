@@ -234,6 +234,8 @@ export interface HarnessApi {
   }>;
   listAgentPresets(): Promise<AgentPreset[]>;
   detectInstalledAgents(): Promise<{ id: string; label: string; installed: boolean }[]>;
+  integrationStatus(): Promise<{ agent: string; label: string; total: number; installed: number; foreign: number }[]>;
+  integrationInstall(agents: string[]): Promise<{ written: string[]; skipped: { path: string; reason: string }[] }>;
   getUserName(): Promise<string | null>;
   setUserName(name: string): Promise<{ ok: boolean }>;
   getSidebarPosition(): Promise<"left" | "right">;
@@ -250,6 +252,10 @@ export interface HarnessApi {
   pathForFile(file: File): string;
   listSubagents(): Promise<SubagentInfo[]>;
   readSubagent(id: string): Promise<SubagentLine[]>;
+  loopStart(sessionId: string, goal: string, maxIterations: number, check?: string): Promise<{ ok: true; loop: LoopInfo } | { ok: false; message: string }>;
+  loopStop(sessionId: string): Promise<{ ok: boolean }>;
+  loopList(): Promise<LoopInfo[]>;
+  onLoopUpdate(cb: (info: LoopInfo) => void): () => void;
   onWindowMaximized(cb: (maximized: boolean) => void): () => void;
   closeWindow(): Promise<void>;
   listPluginManifests(): Promise<PluginManifest[]>;
@@ -260,6 +266,8 @@ export interface HarnessApi {
   pluginsGetConfig(): Promise<Record<string, Record<string, unknown>>>;
   pluginsGetAppDataDir(): Promise<string>;
   pluginsInvoke(id: string, op: string, args?: unknown, projectRoot?: string): Promise<any>;
+  uploadCustomPlugin(): Promise<{ ok: boolean; canceled?: boolean; message?: string; manifest?: { id: string; name: string; version: string } }>;
+  removeCustomPlugin(id: string): Promise<{ ok: boolean; message?: string }>;
   getAgentDefaults(): Promise<{ defaultPresetId: string; defaultModel: string | null }>;
   listLocalModels(endpoint?: string): Promise<{ ok: boolean; models: string[]; message?: string }>;
   getAgentConfig(): Promise<{
@@ -410,4 +418,17 @@ export interface SubagentInfo {
 export interface SubagentLine {
   kind: "task" | "text" | "tool" | "result";
   text: string;
+}
+
+export interface LoopInfo {
+  sessionId: string;
+  goal: string;
+  maxIterations: number;
+  iteration: number;
+  state: "running" | "stopped" | "done";
+  startedAt: number;
+  message?: string;
+  check?: string;
+  phase?: "working" | "checking";
+  lastCheck?: { code: number | null; at: number; tail: string };
 }

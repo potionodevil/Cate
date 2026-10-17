@@ -57,6 +57,8 @@ export interface PluginInfo {
   icon?: string;
   configFields?: PluginConfigField[];
   operations?: string[];
+  /** true fuer selbst hochgeladene Plugins (Einstellungen > Plugins > Hochladen); nur diese lassen sich entfernen. */
+  custom?: boolean;
 }
 
 export interface PluginCatalogEntry {
@@ -92,6 +94,7 @@ add({ id: "contractGuard", name: "Vertragsprüfer", category: "web3", icon: "con
 add({ id: "dexFeed", name: "DEX-Kursfeed", category: "web3", icon: "chart", description: "Liefert Kurs- und Liquiditätsdaten dezentraler Börsen." });
 add({ id: "visualDiff", name: "Visueller Vergleich", category: "ui", icon: "visual", description: "Vergleicht Screenshots vor und nach einer Änderung." });
 add({ id: "voiceBridge", name: "Sprachbrücke", category: "tools", icon: "mic", description: "Sprachein- und -ausgabe für Sitzungen." });
+add({ id: "gitGuard", name: "GitGuard — Auto-Commit & Push", category: "workflow", icon: "shield", description: "Committet und pusht Änderungen automatisch in festen Abständen." });
 add({ id: "contextPicker", name: "Kontext-Auswahl", category: "context", icon: "puzzle", description: "Hängt Dateien oder die Zwischenablage als Kontext an ein Projekt an." });
 
 function normalizeId(id: string): string {

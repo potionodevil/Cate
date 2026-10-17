@@ -100,7 +100,7 @@ export function PluginDock({ className, icons, onManage }: PluginDockProps) {
                     <div className="truncate text-xs font-medium">{plugin.name}</div>
                     <div className="truncate font-mono text-[10px] text-muted-foreground">v{plugin.version}</div>
                   </div>
-                  <Switch checked={plugin.enabled} onCheckedChange={(v) => pluginRegistry.setEnabled(plugin.id, v)} aria-label={`${plugin.name} aktivieren`} />
+                  <Switch checked={plugin.enabled} onCheckedChange={(v) => pluginRegistry.requestToggle(plugin.id, v)} aria-label={`${plugin.name} aktivieren`} />
                 </div>
               ))}
             </PopoverContent>

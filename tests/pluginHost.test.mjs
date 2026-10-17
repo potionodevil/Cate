@@ -18,11 +18,11 @@ function mk(extra = {}) {
   return { dir, stateFile, host, again: () => createPluginHost({ stateFile, appDataDir: dir, crypto: fakeCrypto, ...extra }) };
 }
 
-test("all 19 modules are listed with defaults", () => {
+test("all 20 modules are listed with defaults", () => {
   const { host, dir } = mk();
   const list = host.listPlugins();
-  assert.equal(list.length, 19);
-  assert.equal(PLUGIN_MODULES.length, 19);
+  assert.equal(list.length, 20);
+  assert.equal(PLUGIN_MODULES.length, 20);
   const on = list.filter((p) => p.enabled).map((p) => p.id).sort();
   assert.deepEqual(on, ["commandPolicy", "gitDiff", "gitTimeline", "secretGuard", "vramThrottle"]);
   for (const p of list) assert.ok(p.operations.length > 0, p.id);
@@ -112,5 +112,26 @@ test("invoke injects config/appDataDir/projectRoot; explicit args win", async ()
   assert.equal(seen[1].appDataDir, "/x");
   assert.equal(seen[1].config.k, "over");
   assert.equal(seen[1].config.tok, "abc");
+  rmSync(dir, { recursive: true, force: true });
+});
+
+test("corrupt state file is backed up instead of silently resetting toggles", async () => {
+  const { writeFileSync, readdirSync } = await import("node:fs");
+  const { host, stateFile, dir, again } = mk();
+  host.setEnabled("notifier", true);
+  writeFileSync(stateFile, "{ kaputt", "utf8");
+  const fresh = again();
+  assert.equal(fresh.listPlugins().find((p) => p.id === "notifier").enabled, false);
+  assert.ok(readdirSync(dir).some((f) => f.includes(".corrupt-")));
+  rmSync(dir, { recursive: true, force: true });
+});
+
+test("enabled state survives a new host instance", () => {
+  const { host, dir, again } = mk();
+  host.setEnabled("notifier", true);
+  host.setEnabled("gitDiff", false);
+  const list = again().listPlugins();
+  assert.equal(list.find((p) => p.id === "notifier").enabled, true);
+  assert.equal(list.find((p) => p.id === "gitDiff").enabled, false);
   rmSync(dir, { recursive: true, force: true });
 });

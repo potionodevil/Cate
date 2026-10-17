@@ -34,7 +34,7 @@ import { PluginManager } from "./panels/PluginManager";
 import { GitDiffPanel } from "./panels/GitDiffPanel";
 import { pluginRegistry, registerPlugin } from "./pluginRegistry";
 import type { PluginInfo } from "./pluginCatalog";
-import { IconGit } from "./icons";
+import { IconGit, IconLoop } from "./icons";
 
 interface SessionNode {
   type: "session";
@@ -144,9 +144,16 @@ export function App() {
   const pluginsRef = useRef<PluginInfo[]>([]);
   pluginsRef.current = plugins;
 
+  // Host (plugins-state.json) ist die einzige Quelle der Wahrheit. Veraltete Antworten und
+  // Antworten waehrend eines laufenden Schalters duerfen den lokalen Zustand nicht ueberschreiben.
+  const reloadSeq = useRef(0);
+  const pendingToggles = useRef(0);
+
   async function reloadPlugins() {
+    const seq = ++reloadSeq.current;
     try {
       const [list, cfg] = await Promise.all([window.harness.pluginsList(), window.harness.pluginsGetConfig()]);
+      if (seq !== reloadSeq.current || pendingToggles.current > 0) return;
       setPlugins(list);
       setPluginConfig(cfg);
       for (const p of list) {
@@ -159,15 +166,36 @@ export function App() {
   }
 
   async function handlePluginToggle(id: string, enabled: boolean) {
+    pendingToggles.current++;
     setPlugins((prev) => prev.map((p) => (p.id === id ? { ...p, enabled, status: enabled ? "active" : "inactive" } : p)));
     if (pluginRegistry.isEnabled(id) !== enabled) pluginRegistry.setEnabled(id, enabled);
-    await window.harness.pluginsSetEnabled(id, enabled).catch(() => undefined);
+    try {
+      await window.harness.pluginsSetEnabled(id, enabled);
+    } catch {
+      /* Host nicht erreichbar: das anschliessende Neuladen stellt den echten Zustand wieder her */
+    } finally {
+      pendingToggles.current--;
+    }
     void reloadPlugins();
   }
+  const toggleRef = useRef(handlePluginToggle);
+  toggleRef.current = handlePluginToggle;
 
   async function handlePluginConfig(id: string, key: string, value: unknown) {
     await window.harness.pluginsSetConfig(id, key, value).catch(() => undefined);
     void reloadPlugins();
+  }
+
+  async function handleUploadPlugin() {
+    const res = await window.harness.uploadCustomPlugin();
+    if (res.ok) void reloadPlugins();
+    return res;
+  }
+
+  async function handleRemoveCustomPlugin(id: string) {
+    const res = await window.harness.removeCustomPlugin(id);
+    if (res.ok) void reloadPlugins();
+    return res;
   }
 
   useEffect(() => {
@@ -181,15 +209,20 @@ export function App() {
       slots: ["action"],
       actions: [{ id: "gitDiff.toggle", label: "Git-Diff anzeigen", icon: IconGit, contextKinds: ["project"], run: () => setShowGitDiff((v) => !v) }]
     });
-    // Schalter im Header-Popover (Registry) zurueck in den Host spiegeln.
-    const unsubscribe = pluginRegistry.subscribe(() => {
-      for (const p of pluginsRef.current) {
-        if (pluginRegistry.isEnabled(p.id) !== p.enabled) void handlePluginToggle(p.id, pluginRegistry.isEnabled(p.id));
-      }
+    // Rechtsklick auf eine Session: "Agent-Loop starten" oeffnet denselben Dialog wie der Linksklick-Button.
+    const unregisterLoop = registerPlugin({
+      id: "agentLoop",
+      name: "Agent-Loop",
+      version: "1.0.0",
+      slots: ["action"],
+      actions: [{ id: "agentLoop.start", label: "Agent-Loop starten …", icon: IconLoop, contextKinds: ["session"], run: (ctx) => { window.dispatchEvent(new CustomEvent("cate:loop-open", { detail: ctx?.targetId })); } }]
     });
+    // Schalter im Header-Popover/Dock laufen ueber den Host (kein Rueckspiegeln von Registry-Aenderungen).
+    pluginRegistry.setToggleHandler((id, enabled) => void toggleRef.current(id, enabled));
     return () => {
-      unsubscribe();
+      pluginRegistry.setToggleHandler(null);
       unregister();
+      unregisterLoop();
     };
   }, []);
 
@@ -861,6 +894,8 @@ export function App() {
         onToggle={(id, enabled) => void handlePluginToggle(id, enabled)}
         onConfigChange={(id, key, value) => void handlePluginConfig(id, key, value)}
         onInvoke={(id, op, args) => window.harness.pluginsInvoke(id, op, args, activeProject?.folder)}
+        onUpload={handleUploadPlugin}
+        onRemoveCustom={handleRemoveCustomPlugin}
       />
       <RaycastOverlay />
     </div>

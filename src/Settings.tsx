@@ -5,6 +5,7 @@
  */
 import React, { useEffect, useState } from "react";
 import { AgentConnections } from "./AgentConnections";
+import { AgentIntegration } from "./AgentIntegration";
 import { PetSettingsTab } from "./PetSettings";
 import type { AuthCredentialRow } from "./types";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
@@ -331,6 +332,8 @@ export function Settings({
 
           <TabsContent value="connections" className="hh-settings-scroll flex flex-col gap-2">
             <AgentConnections />
+            <Separator className="my-4" />
+            <AgentIntegration />
           </TabsContent>
 
           <TabsContent value="pet" className="hh-settings-scroll flex flex-col gap-2">
