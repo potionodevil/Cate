@@ -8,7 +8,7 @@ import { join, dirname } from "path";
 import { existsSync, mkdirSync, readFileSync, writeFileSync, appendFileSync, unlinkSync, readdirSync } from "fs";
 import { homedir } from "os";
 import { loadState, saveState, slugifyProfileName, projectExportData, parseProjectExport, type Project } from "./projectStore";
-import { listSubagents, readSubagent, type SubagentInfo } from "./subagents";
+import { findHermesSessionId, listSubagents, readSubagent, type SubagentInfo } from "./subagents";
 import { attachFromClipboard, attachPickFiles, attachSaveBytes } from "./attachments";
 import { hermesProfileCreate, hermesProfileDelete, hermesAuthAdd, hermesAuthList, hermesAuthRemove, hermesDisableTelemetryPrompt, hermesEnsureProfile } from "./hermesCli";
 import { readRecentUsage, sumUsageSince } from "./usageReader";
@@ -640,7 +640,24 @@ app.whenReady().then(async () => {
     });
     const inbox = takeInbox(record.id);
     const isHermes = opts.presetId === "hermes" && !!opts.shellOverride;
-    if (record.contextPath && existsSync(record.contextPath) && isHermes) {
+    // Hermes genau dort weitermachen lassen, wo es war: Mit --resume bekommt die alte Unterhaltung auch Hermes' eigene
+    // Meldung über unterbrochene Subagenten (samt letztem Stand), sodass sie fortgesetzt oder neu gestartet werden können.
+    const hermesId = isHermes ? findHermesSessionId(opts.profile, record.cwd, record.lastActiveAt) : null;
+    if (hermesId) {
+      const pending = inbox.length ? `Neue Nachrichten anderer Sessions:\n${inbox.join("\n")}\n\n` : "";
+      const note =
+        `${pending}[Cate] Die Session wurde nach einem Neustart fortgesetzt. Falls Subagenten unterbrochen wurden ` +
+        `(Ergebnis „unknown“), prüfe ihren letzten Stand und setze sie fort bzw. starte sie neu, damit die Aufgabe weiterläuft.`;
+      try {
+        const seedDir = join(app.getPath("userData"), "session-context");
+        mkdirSync(seedDir, { recursive: true });
+        const seedFile = join(seedDir, `${record.id}.resume.txt`);
+        writeFileSync(seedFile, note, "utf8");
+        opts.args = [...(opts.args ?? []), "chat", "--resume", hermesId, "--query-file", seedFile];
+      } catch {
+        opts.args = [...(opts.args ?? []), "chat", "--resume", hermesId, "-q", note];
+      }
+    } else if (record.contextPath && existsSync(record.contextPath) && isHermes) {
       try {
         const restoredContext = buildRestoreContext(readAirFile(record.contextPath), 8000);
         // Wiederhergestellter Kontext wird dem normalen Start-Seed

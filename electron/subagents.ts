@@ -46,8 +46,36 @@ function claudeProjectDir(folder: string): string {
   return join(os.homedir(), ".claude", "projects", folder.replace(/[^a-zA-Z0-9]/g, "-"));
 }
 
-function hermesDbPath(): string {
-  return join(process.env.LOCALAPPDATA ?? join(os.homedir(), "AppData", "Local"), "hermes", "state.db");
+function hermesDbPath(profile?: string | null): string {
+  const home = join(process.env.LOCALAPPDATA ?? join(os.homedir(), "AppData", "Local"), "hermes");
+  return profile && profile !== "default" ? join(home, "profiles", profile, "state.db") : join(home, "state.db");
+}
+
+/** Findet die Hermes-Session, die zu einer Cate-Session gehört: gleiches Profil und gleicher Ordner, zuletzt aktiv am
+ * nächsten an der letzten Aktivität der Cate-Session. Damit kann Cate nach einem Neustart genau diese Unterhaltung mit
+ * `--resume` fortsetzen — inklusive der Meldung, welche Subagenten unterbrochen wurden und wie weit sie waren. */
+export function findHermesSessionId(profile: string | null | undefined, cwd: string, lastActiveAt: number): string | null {
+  const Db = loadDatabase();
+  const path = hermesDbPath(profile);
+  if (!Db || !existsSync(path)) return null;
+  let db: any;
+  try {
+    db = new Db(path, { readonly: true, fileMustExist: true });
+    const rows = db
+      .prepare("SELECT id, COALESCE(last_activity_at, started_at) AS t FROM sessions WHERE parent_session_id IS NULL AND source = 'cli' AND lower(cwd) = lower(?)")
+      .all(cwd) as { id: string; t: number }[];
+    let best: { id: string; d: number } | null = null;
+    for (const r of rows) {
+      const d = Math.abs(r.t * 1000 - lastActiveAt);
+      if (!best || d < best.d) best = { id: r.id, d };
+    }
+    // Mehr als 6 h Abstand: das ist wohl eine andere Unterhaltung — dann lieber frisch starten.
+    return best && best.d < 6 * 3600_000 ? best.id : null;
+  } catch {
+    return null;
+  } finally {
+    try { db?.close(); } catch { /* egal */ }
+  }
 }
 
 /** Ein Subagent gilt als fertig, wenn er seit 25 s nichts mehr geschrieben hat — die Protokolle haben kein verlässliches „Ende“-Signal. */
