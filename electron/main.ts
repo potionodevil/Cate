@@ -40,8 +40,22 @@ import { improvePrompt } from "./promptImprover";
 import { setupPet } from "./pet";
 import { AgentLoopManager } from "./agentLoop";
 import { loopProfileFor, installCommands, integrationStatus, INTEGRATION_AGENTS, type AgentKind, type InstallPaths } from "./agentIntegration";
+import { setLinuxAutoStart } from "./autostart";
+import { hermesHomeDir } from "./hermesHome";
 
 const isDev = process.env.NODE_ENV === "development";
+
+/** Schaltet „Beim Systemstart starten“ plattformgerecht: Windows/macOS machen
+ * das über Electron, Linux braucht eine Autostart-Desktop-Datei (setLoginItemSettings
+ * wird dort still ignoriert). */
+function applyAutoStart(on: boolean): void {
+  if (process.platform === "linux") {
+    setLinuxAutoStart(on);
+  } else {
+    app.setLoginItemSettings({ openAtLogin: on, args: ["--hidden"] });
+  }
+}
+
 const sessionManager = new SessionManager();
 sessionManager.agentExtrasFor = (presetId) => agentExtras(presetId, loadState());
 sessionManager.bannerFor = buildBanner;
@@ -412,10 +426,10 @@ app.whenReady().then(async () => {
     powerMonitor.on(ev as "suspend", () => sessionManager.checkpointAll());
   }
 
-  // Start with Windows (hidden, in the tray) so persistent sessions come back
-  // after a PC restart. Disable with `autoStart: false` in the state file.
+  // Start with the system (hidden, in the tray) so persistent sessions come back
+  // after a reboot. Disable with `autoStart: false` in the state file.
   if (!isDev && loadState().autoStart !== false) {
-    app.setLoginItemSettings({ openAtLogin: true, args: ["--hidden"] });
+    applyAutoStart(true);
   }
   const win = createWindow();
   if (process.argv.includes("--hidden")) win.hide();
@@ -635,7 +649,7 @@ ${stderr ?? ""}` });
   // Agent-Integration: Slash-Befehle (/agentloop, /validate, /cate) je Agent installieren (nur auf Klick in den Einstellungen).
   const integrationPaths = (): InstallPaths => ({
     home: homedir(),
-    hermesHome: join(process.env.LOCALAPPDATA ?? join(homedir(), "AppData", "Local"), "hermes"),
+    hermesHome: hermesHomeDir(),
     hermesProfiles: [...new Set(loadState().projects.map((p) => p.hermesProfile).filter((p): p is string => !!p))]
   });
   ipcMain.handle("integration:status", () => integrationStatus(integrationPaths()));
@@ -965,13 +979,13 @@ ${stderr ?? ""}` });
     return { ok: true, hermesProfileResult: result };
   });
 
-  // „Mit Windows starten“: Schalter aus den Einstellungen; der Start läuft versteckt im Tray, damit Sessions nach einem Neustart von selbst zurückkommen.
+  // „Beim Systemstart starten“: Schalter aus den Einstellungen; der Start läuft versteckt im Tray, damit Sessions nach einem Neustart von selbst zurückkommen.
   ipcMain.handle("app:getAutostart", () => loadState().autoStart !== false);
   ipcMain.handle("app:setAutostart", (_e, on: boolean) => {
     const state = loadState();
     state.autoStart = !!on;
     saveState(state);
-    if (!isDev) app.setLoginItemSettings({ openAtLogin: !!on, args: ["--hidden"] });
+    if (!isDev) applyAutoStart(!!on);
     return !!on;
   });
 

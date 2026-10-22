@@ -249,7 +249,7 @@ export function Settings({
           <TabsContent value="general" className="hh-settings-scroll flex flex-col gap-2">
             <div className="flex items-center justify-between gap-3">
               <div className="flex flex-col">
-                <Label htmlFor="autostart">Mit Windows starten</Label>
+                <Label htmlFor="autostart">Beim Systemstart starten</Label>
                 <span className="hh-faint text-xs">Startet Cate versteckt im Tray; Sessions kommen nach einem Neustart von selbst zurück.</span>
               </div>
               <Switch

@@ -6,9 +6,8 @@
 import { execFile } from "child_process";
 import { promisify } from "util";
 import { existsSync } from "fs";
-import { join } from "path";
-import os from "os";
 import { resolveHermesCommand, hermesNeedsShell } from "./resolveHermes";
+import { hermesProfileDir } from "./hermesHome";
 
 const execFileAsync = promisify(execFile);
 
@@ -30,7 +29,7 @@ export async function hermesProfileCreate(name: string): Promise<{ ok: boolean; 
 
 /** Ordner eines Hermes-Profils (dort legt `hermes profile create` alles ab). */
 function profileDir(name: string): string {
-  return join(process.env.LOCALAPPDATA ?? join(os.homedir(), "AppData", "Local"), "hermes", "profiles", name);
+  return hermesProfileDir(name);
 }
 
 const ensuring = new Map<string, Promise<{ ok: boolean; message: string }>>();

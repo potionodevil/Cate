@@ -6,6 +6,7 @@
 import { existsSync, readdirSync, readFileSync, statSync } from "fs";
 import { join } from "path";
 import os from "os";
+import { hermesHomeDir } from "./hermesHome";
 
 export interface SubagentInfo {
   id: string;
@@ -48,7 +49,7 @@ function claudeProjectDir(folder: string): string {
 
 /** Pfad der state.db eines Hermes-Profils: leer/„default“ → Basis-state.db, sonst profiles/<profil>/state.db. */
 export function hermesDbPath(profile?: string | null, localAppData?: string): string {
-  const base = join(localAppData ?? process.env.LOCALAPPDATA ?? join(os.homedir(), "AppData", "Local"), "hermes");
+  const base = localAppData ? join(localAppData, "hermes") : hermesHomeDir();
   const p = (profile ?? "").trim();
   return !p || p === "default" ? join(base, "state.db") : join(base, "profiles", p, "state.db");
 }

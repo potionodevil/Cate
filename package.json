@@ -16,7 +16,8 @@
     "start": "electron .",
     "test": "node --test \"tests/**/*.test.js\" \"tests/**/*.test.mjs\"",
     "typecheck": "tsc -p electron/tsconfig.json --noEmit && tsc -p tsconfig.json --noEmit",
-    "dist": "npm run build && electron-builder --win",
+    "dist": "npm run build && electron-builder --linux",
+    "dist:win": "npm run build && electron-builder --win",
     "icons": "node scripts/make-icons.mjs",
     "rebuild-native": "node scripts/patch-native.cjs && electron-rebuild -f -w better-sqlite3,@homebridge/node-pty-prebuilt-multiarch"
   },
@@ -34,6 +35,14 @@
     "win": {
       "icon": "assets/icon.ico",
       "target": "nsis"
+    },
+    "linux": {
+      "icon": "assets/icon.png",
+      "target": ["AppImage", "pacman"],
+      "category": "Development",
+      "maintainer": "R.S.",
+      "synopsis": "Multi-Terminal Harness mit Hermes-Integration",
+      "artifactName": "Cate-${version}-linux.${ext}"
     },
     "nsis": {
       "oneClick": false,

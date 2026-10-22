@@ -57,21 +57,25 @@ if (src === original) {
 }
 
 // 3) The published npm tarball ships NO C++ sources at all (prebuild-only
-// package) - fetch just the two files we actually need (conpty + its
-// path_util helper + conpty_console_list) straight from the GitHub tag
+// package) - fetch the files we actually need straight from the GitHub tag
 // matching our installed version, so a from-source Electron-ABI build is
-// possible at all.
+// possible at all. Windows builds need conpty + its path_util helper +
+// conpty_console_list; POSIX builds need unix/pty.cc. We fetch every missing
+// file regardless of platform, so the same tree can be rebuilt anywhere.
 const { execFileSync } = require("child_process");
 const pkgVersion = require(path.join(pkgDir, "package.json")).version;
-const winSrcDir = path.join(pkgDir, "src", "win");
-const neededFiles = ["conpty.cc", "conpty.h", "conpty_console_list.cc", "path_util.cc", "path_util.h"];
-const missing = neededFiles.filter((f) => !fs.existsSync(path.join(winSrcDir, f)));
+const srcRoot = path.join(pkgDir, "src");
+const neededFiles = [
+  "win/conpty.cc", "win/conpty.h", "win/conpty_console_list.cc", "win/path_util.cc", "win/path_util.h",
+  "unix/pty.cc"
+];
+const missing = neededFiles.filter((f) => !fs.existsSync(path.join(srcRoot, f)));
 
 if (missing.length > 0) {
-  fs.mkdirSync(winSrcDir, { recursive: true });
-  const base = `https://raw.githubusercontent.com/homebridge/node-pty-prebuilt-multiarch/v${pkgVersion}/src/win`;
+  const base = `https://raw.githubusercontent.com/homebridge/node-pty-prebuilt-multiarch/v${pkgVersion}/src`;
   for (const f of missing) {
-    const dest = path.join(winSrcDir, f);
+    const dest = path.join(srcRoot, f);
+    fs.mkdirSync(path.dirname(dest), { recursive: true });
     console.log(`[patch-native] fetching missing source ${f} from GitHub (v${pkgVersion})...`);
     execFileSync("curl", ["-sfL", `${base}/${f}`, "-o", dest], { stdio: "inherit" });
   }

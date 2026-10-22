@@ -5,7 +5,7 @@
  */
 import { existsSync, readFileSync } from "fs";
 import { join } from "path";
-import os from "os";
+import { hermesHomeDir } from "./hermesHome";
 
 /**
  * Best-effort reader for Hermes's own model-picker cache
@@ -23,8 +23,7 @@ interface RawCacheEntry {
 }
 
 function cachePath(): string {
-  const localAppData = process.env.LOCALAPPDATA || join(os.homedir(), "AppData", "Local");
-  return join(localAppData, "hermes", "provider_models_cache.json");
+  return join(hermesHomeDir(), "provider_models_cache.json");
 }
 
 export function listCachedModels(): { provider: string; models: string[] }[] {

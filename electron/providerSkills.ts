@@ -17,6 +17,7 @@
 import { existsSync, readdirSync, readFileSync } from "fs";
 import { join } from "path";
 import os from "os";
+import { hermesProfileDir } from "./hermesHome";
 import { execFile } from "child_process";
 import { promisify } from "util";
 import { runHermes } from "./hermesCli";
@@ -124,8 +125,7 @@ export function parseHermesSkillsList(stdout: string): { rows: ProviderSkillRow[
 }
 
 export async function readHermesSkills(profile: string): Promise<ProviderSkillsResult> {
-  const localAppData = process.env.LOCALAPPDATA || join(os.homedir(), "AppData", "Local");
-  const profileDir = join(localAppData, "hermes", "profiles", profile);
+  const profileDir = hermesProfileDir(profile);
   try {
     const { stdout } = await runHermes(["-p", profile, "skills", "list"], 25_000);
     const { rows, countLine } = parseHermesSkillsList(stdout);

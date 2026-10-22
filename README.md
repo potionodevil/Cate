@@ -7,16 +7,18 @@ wer gerade arbeitet, wer fertig ist und wer wartet. Dazu gibt es eine kleine
 Pixel-Katze, die auf dem Desktop wohnt und Bescheid sagt, wenn eine Session
 durch ist.
 
-Electron + React + TypeScript, für Windows.
+Electron + React + TypeScript, für Linux (ein Windows-Builder bleibt über
+`npm run dist:win` erhalten).
 
 ## Installieren
 
-1. Aktuelle `Cate-Setup-x.y.z.exe` aus dem Ordner [`dist/`](dist) herunterladen.
-2. Ausführen, Ordner wählen, fertig. Windows meldet evtl. eine SmartScreen-Warnung,
-   weil der Installer nicht signiert ist („Weitere Informationen“ → „Trotzdem ausführen“).
+1. Aktuelle `Cate-x.y.z-linux.AppImage` aus dem Ordner [`dist/`](dist) herunterladen
+   (unter Arch/CachyOS alternativ das `Cate-x.y.z-linux.pacman`-Paket).
+2. AppImage ausführbar machen und starten: `chmod +x Cate-*.AppImage && ./Cate-*.AppImage`.
 
-**Aktualisieren:** Einfach den neuen Installer über die bestehende Installation
-laufen lassen. Projekte, Sessions und Einstellungen bleiben erhalten.
+**Aktualisieren:** Einfach die neue AppImage bzw. das neue Paket über die
+bestehende Installation laufen lassen. Projekte, Sessions und Einstellungen
+bleiben erhalten.
 
 ## Was Cate kann
 
@@ -46,7 +48,8 @@ npm run build
 npm run dev              # Vite-Devserver + Electron mit Hot Reload
 npm test                 # Unit-Tests (node:test)
 npm run typecheck
-npm run dist             # Windows-Installer nach dist/
+npm run dist             # Linux-Pakete (AppImage, pacman) nach dist/
+npm run dist:win         # Windows-Installer nach dist/
 ```
 
 Die Pixel-Katze und ihre Tiere entstehen aus `scripts/make-cat.py`
