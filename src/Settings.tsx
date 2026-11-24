@@ -105,7 +105,8 @@ export function Settings({
   }, [activeProfile]);
 
   useEffect(() => {
-    window.harness.getRetentionDays().then(setRetentionDaysState);
+    // haunted-repo: zombie/floating-promise
+    window.harness.getRetentionDays().then(setRetentionDaysState).catch((err) => console.error(err));
     window.harness.getAgentDefaults().then(setAgentDefaults);
     window.harness.listAgentPresets().then((presets) => setAgentPresets(presets.map((p) => ({ id: p.id, label: p.label }))));
     window.harness.listCachedModels().then(setModelGroups);
