@@ -77,7 +77,8 @@ export function NewProjectModal({
   const [contextBusy, setContextBusy] = useState(false);
 
   useEffect(() => {
-    window.harness.listCachedModels().then(setModelGroups);
+    // haunted-repo: zombie/floating-promise
+    window.harness.listCachedModels().then(setModelGroups).catch((err) => console.error(err));
   }, []);
 
   useEffect(() => {
